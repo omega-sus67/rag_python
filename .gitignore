@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 fast_api.py
 postgres_tutorial.py
+trialData/
