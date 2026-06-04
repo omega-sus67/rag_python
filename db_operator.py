@@ -1,12 +1,13 @@
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, text, select
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, text, select, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker
-from fast_api import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker,create_async_engine
 from pdf_operator import Document
 from pydantic import BaseModel
 import hashlib
+from pgvector.sqlalchemy import Vector
 
-ASYNC_DATABASE_URL = "postgresql+asyncpg://postgres:password@localhost:5432/tutorial_db"
+ASYNC_DATABASE_URL = "postgresql+asyncpg://postgres:password@localhost:5433/tutorial_db"
 
 async_engine = create_async_engine(
     ASYNC_DATABASE_URL,
@@ -14,7 +15,6 @@ async_engine = create_async_engine(
 )
 
 AsyncSessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=async_engine)
-
 
 Base = declarative_base()
 
@@ -24,6 +24,16 @@ class dbFile(Base):
     id = Column(String , primary_key=True , index=True)
     title = Column(String , nullable=False)
     extracted_text = Column(String , nullable=False)
+
+class dbChunk(Base):
+    __tablename__ = "doc_chunks"
+
+    id = Column(String, primary_key=True, index=True)
+    file_id = Column(String , ForeignKey("files.id"))
+    chunk_index = Column(Integer , nullable=False)
+    text_data = Column(String , nullable=False)
+    embeddings = Column(Vector(1536))
+
 
 async def saveDocument(doc : Document):
     uniqueID = hashlib.sha256(doc.extracted_text.encode('utf-8')).hexdigest()
@@ -56,7 +66,7 @@ async def fetchDoc(id : str):
         return doc
 
 async def createTable():
-    temp_url = "postgresql+asyncpg://postgres:password@localhost:5432/postgres"
+    temp_url = "postgresql+asyncpg://postgres:password@localhost:5433/postgres"
     async_temp_engine = create_async_engine(temp_url, isolation_level="AUTOCOMMIT")
     
     async with async_temp_engine.connect() as conn:
@@ -71,4 +81,5 @@ async def createTable():
 
     # 2. Now connect to 'tutorial_db' and create tables
     async with async_engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
         await conn.run_sync(Base.metadata.create_all)

@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fast_api import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from pdf_operator import parsePdf, Document
 from db_operator import createTable, saveDocument, fetchDoc
 from pydantic import BaseModel
