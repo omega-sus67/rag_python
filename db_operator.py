@@ -32,7 +32,7 @@ class dbChunk(Base):
     file_id = Column(String , ForeignKey("files.id"))
     chunk_index = Column(Integer , nullable=False)
     text_data = Column(String , nullable=False)
-    embeddings = Column(Vector(1536))
+    embeddings = Column(Vector(384))
 
 
 async def saveDocument(doc : Document):

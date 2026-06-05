@@ -54,7 +54,7 @@ class markdownParser:
     start_line: int
     ) -> None:
         table_text = "\n".join(buffer)
-        table_node = DocumentNode(
+        table_node = DocNode(
             node_type=NodeType.TABLE,
             text=table_text,
             level=parent.level,
