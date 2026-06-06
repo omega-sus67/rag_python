@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from app.utils.pdf_operator import parsePdf
 from app.db.database_manager import DatabaseManager, RAGIngestionManager
+from app.db.retrieval_manager import HierarchicalRAGRetriever
 from app.engines.semantic_engine import SemanticEngine
 
 class MainController:
@@ -63,3 +64,10 @@ class MainController:
     async def fetch_document(self, doc_id: str):
         """Retrieves document metadata by ID."""
         return await self.db_manager.fetch_document(doc_id)
+
+    async def query_document(self, query_text: str, file_id: str, top_k: int = 3):
+        """Queries the document for relevant chunks based on semantic similarity."""
+        async with self.db_manager.SessionLocal() as session:
+            retriever = HierarchicalRAGRetriever(db_session=session, vector_engine=self.vector_engine)
+            results = await retriever.retrieve_relevant_chunks(query_text, file_id, top_k)
+            return results

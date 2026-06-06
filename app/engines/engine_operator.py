@@ -16,7 +16,7 @@ class RenderedChunk:
 
 
 class HierarchicalSemanticEngine:
-    def __init__(self, vector_engine: SemanticEngine, window_size: int = 3, threshold_factor: float = 0.8):
+    def __init__(self, vector_engine: SemanticEngine, window_size: int = 5, threshold_factor: float = 1.2):
         self.structure_parser = markdownParser()
         self.boundary_detector = SlidingSemanticChunker(
             vector_engine=vector_engine, 

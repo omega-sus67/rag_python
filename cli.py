@@ -1,0 +1,125 @@
+import argparse
+import asyncio
+import os
+import sys
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.prompt import Prompt
+
+from app.controllers.main_controller import MainController
+from fastapi import HTTPException
+
+console = Console()
+
+async def ingest_document(filepath: str):
+    if not os.path.exists(filepath):
+        console.print(f"[bold red]Error:[/] File not found at '{filepath}'")
+        sys.exit(1)
+        
+    console.print(Panel(f"[bold cyan]RAG Pipeline[/] - Ingesting Document\n[dim]{filepath}[/]", border_style="cyan"))
+    
+    controller = MainController()
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        transient=True,
+    ) as progress:
+        task = progress.add_task("[yellow]Initializing system...", total=None)
+        await controller.initialize_system()
+        
+        progress.update(task, description="[cyan]Parsing, chunking, and embedding document...")
+        try:
+            result = await controller.process_and_ingest_pdf(filepath)
+            
+            console.print(Panel(
+                f"[bold green]Success![/]\n\n"
+                f"[bold]Title:[/] {result['title']}\n"
+                f"[bold]Document ID:[/] [yellow]{result['document_id']}[/]\n"
+                f"[bold]Chunks Processed:[/] {result['chunks_processed']}",
+                title="Ingestion Complete",
+                border_style="green"
+            ))
+        except HTTPException as e:
+            if e.status_code == 400 and "already exists" in e.detail:
+                console.print(Panel("[bold yellow]Notice:[/] Document is already ingested in the database.", border_style="yellow"))
+            else:
+                console.print(f"[bold red]Pipeline Error:[/] {e.detail}")
+        except Exception as e:
+            console.print(f"[bold red]Unexpected Error:[/] {str(e)}")
+
+async def query_document(file_id: str, query: str, top_k: int):
+    console.print(Panel(f"[bold cyan]RAG Pipeline[/] - Semantic Search\n[dim]Querying Document: {file_id}[/]", border_style="cyan"))
+    
+    controller = MainController()
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        transient=True,
+    ) as progress:
+        task = progress.add_task("[yellow]Initializing system...", total=None)
+        await controller.initialize_system()
+        
+        progress.update(task, description=f"[cyan]Searching for top {top_k} matches...")
+        
+        try:
+            # First, fetch doc to make sure it exists
+            doc = await controller.fetch_document(file_id)
+            console.print(f"Searching in: [bold]{doc.title}[/]\n")
+            
+            results = await controller.query_document(query, file_id, top_k)
+            
+            if not results:
+                console.print("[yellow]No relevant chunks found.[/]")
+                return
+                
+            for i, res in enumerate(results, 1):
+                sim_score = res['similarity']
+                # Color code the score
+                score_color = "green" if sim_score > 0.5 else "yellow" if sim_score > 0.3 else "red"
+                
+                content = Text()
+                content.append(f"Similarity: ", style="bold")
+                content.append(f"{sim_score:.2%}\n\n", style=f"bold {score_color}")
+                content.append(res['text'])
+                
+                console.print(Panel(
+                    content,
+                    title=f"Result #{i} (Chunk ID: {res['chunk_id'][:8]}...)",
+                    border_style="blue"
+                ))
+                
+        except HTTPException as e:
+            console.print(f"[bold red]API Error:[/] {e.detail}")
+        except Exception as e:
+            console.print(f"[bold red]Unexpected Error:[/] {str(e)}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Hermes-style RAG Pipeline CLI")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    
+    # Ingest command
+    ingest_parser = subparsers.add_parser("ingest", help="Ingest a PDF document into the database")
+    ingest_parser.add_argument("filepath", type=str, help="Path to the PDF file")
+    
+    # Query command
+    query_parser = subparsers.add_parser("query", help="Query an ingested document")
+    query_parser.add_argument("file_id", type=str, help="The Document ID to query")
+    query_parser.add_argument("query_text", type=str, help="Your semantic search query")
+    query_parser.add_argument("--top", type=int, default=3, help="Number of chunks to return (default: 3)")
+    
+    args = parser.parse_args()
+    
+    if args.command == "ingest":
+        asyncio.run(ingest_document(args.filepath))
+    elif args.command == "query":
+        asyncio.run(query_document(args.file_id, args.query_text, args.top))
+    else:
+        parser.print_help()
+
+if __name__ == "__main__":
+    main()

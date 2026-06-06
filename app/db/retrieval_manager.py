@@ -1,6 +1,6 @@
 # retriever.py
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
 # Assuming pgvector provides the cosine_distance operator via its SQLAlchemy extension
 from pgvector.sqlalchemy import Vector
@@ -10,11 +10,11 @@ from app.db.database_manager import dbChunk
 
 class HierarchicalRAGRetriever:
     """Handles high-performance semantic vector queries against the pgvector database schema."""
-    def __init__(self, db_session: Session, vector_engine: SemanticEngine):
+    def __init__(self, db_session: AsyncSession, vector_engine: SemanticEngine):
         self.db = db_session
         self.vector_engine = vector_engine
 
-    def retrieve_relevant_chunks(self, query_text: str, file_id: str, top_k: int = 3) -> List[Dict[str, Any]]:
+    async def retrieve_relevant_chunks(self, query_text: str, file_id: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """
         Converts a raw question into a vector coordinate and extracts 
         the top_k closest structural text blocks from PostgreSQL.
@@ -39,7 +39,7 @@ class HierarchicalRAGRetriever:
         )
 
         # Step 3: Execute the transaction and package results
-        results = self.db.execute(query_statement).all()
+        results = (await self.db.execute(query_statement)).all()
         
         matched_payloads = []
         for row in results:

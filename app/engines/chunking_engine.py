@@ -48,11 +48,13 @@ class markdownParser:
         self.table_row_regex = re.compile(r'^\|.*\|$')
     
     def _flush_table(
-    self,
-    parent: DocNode,
-    buffer: List[str],
-    start_line: int
+        self,
+        parent: DocNode,
+        buffer: List[str],
+        start_line: int
     ) -> None:
+        if not buffer:
+            return
         table_text = "\n".join(buffer)
         table_node = DocNode(
             node_type=NodeType.TABLE,
@@ -63,11 +65,31 @@ class markdownParser:
         parent.add_child(table_node)
         buffer.clear()
 
+    def _flush_paragraph(
+        self,
+        parent: DocNode,
+        buffer: List[str],
+        start_line: int
+    ) -> None:
+        if not buffer:
+            return
+        paragraph_text = " ".join(buffer)
+        paragraph_node = DocNode(
+            node_type=NodeType.PARAGRAPH,
+            text=paragraph_text,
+            level=parent.level,
+            metadata={"line_number": start_line}
+        )
+        parent.add_child(paragraph_node)
+        buffer.clear()
+
     def parse(self, text : str) -> DocNode:
         root = DocNode(node_type = NodeType.ROOT, text = "ROOT_TEXT", level = 0 , metadata=None)
 
         buffer : List[str] = []
+        para_buffer : List[str] = []
         start_line : int = 0
+        para_start_line : int = 0
         current_parent : DocNode = root
         in_table : bool = False
 
@@ -80,9 +102,15 @@ class markdownParser:
                 if in_table:   
                     self._flush_table(current_parent, buffer, start_line)
                     in_table = False
+                # If we are not in a table, we simply append a space to the para_buffer 
+                # so that consecutive paragraphs don't squash their words together.
+                if para_buffer:
+                    para_buffer.append(" ")
                 continue
             
             if self.table_row_regex.match(strip_line):
+                if para_buffer:
+                    self._flush_paragraph(current_parent, para_buffer, para_start_line)
                 if not in_table:
                     in_table = True
                     start_line = i
@@ -94,6 +122,8 @@ class markdownParser:
             
             heading_match = self.heading_regex.match(strip_line)
             if heading_match:
+                if para_buffer:
+                    self._flush_paragraph(current_parent, para_buffer, para_start_line)
                 hashes, heading_text = heading_match.groups()
                 level = len(hashes)
 
@@ -108,8 +138,11 @@ class markdownParser:
                 current_parent.add_child(heading_node)
                 current_parent = heading_node
                 continue
+            
             list_match = self.list_regex.match(strip_line)
             if list_match:
+                if para_buffer:
+                    self._flush_paragraph(current_parent, para_buffer, para_start_line)
                 indent, list_item_text = list_match.groups()
                 listNode = DocNode(
                     node_type = NodeType.LIST_ITEM,
@@ -120,22 +153,13 @@ class markdownParser:
                 current_parent.add_child(listNode)
                 continue
 
-            paragraph_node = DocNode(
-                node_type=NodeType.PARAGRAPH,
-                text=strip_line,
-                level=current_parent.level,
-                metadata={"line_number": i}
-            )
-            current_parent.add_child(paragraph_node)
+            if not para_buffer:
+                para_start_line = i
+            para_buffer.append(strip_line)
 
         if in_table:
             self._flush_table(current_parent, buffer, start_line)
+        if para_buffer:
+            self._flush_paragraph(current_parent, para_buffer, para_start_line)
             
         return root
-                
-                
-                
-                
-                
-                    
-        
