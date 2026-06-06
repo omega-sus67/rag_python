@@ -1,8 +1,8 @@
 import uuid
 from typing import List, Dict, Any
-from semantic_engine import SemanticEngine, SlidingSemanticChunker
-from chunking_engine import markdownParser, DocNode, NodeType
-
+from app.engines.semantic_engine import SemanticEngine, SlidingSemanticChunker
+from app.engines.chunking_engine import markdownParser, DocNode, NodeType
+from app.utils.token_optimizer import TokenSizeOptimizer
 
 class RenderedChunk:
     def __init__(self, chunk_id: str, parent_node_id: str, text: str, metadata: Dict[str, Any]):
@@ -23,6 +23,7 @@ class HierarchicalSemanticEngine:
             window_size=window_size, 
             threshold_factor=threshold_factor
         )
+        self.token_optimizer = TokenSizeOptimizer()
 
     def process_document(self, raw_markdown_text: str, source_name: str = "unknown") -> List[RenderedChunk]:
         root_node = self.structure_parser.parse(raw_markdown_text)
@@ -43,22 +44,28 @@ class HierarchicalSemanticEngine:
                 context_path = node.get_contextual_path()
                 
                 for block in semantic_blocks:
+                    optimized_sub_texts = self.token_optimizer.optimize_block(block)
+    
+                    context_path = node.get_contextual_path()
                     context_prefix = " > ".join(context_path)
-                    enriched_text = f"Context: {context_prefix}\nContent: {block}" if context_path else block
-                    
+    
+                    for sub_text in optimized_sub_texts:
+                        enriched_text = f"Context: {context_prefix}\nContent: {sub_text}" if context_path else sub_text
+        
                     chunk_metadata = {
                         "source": source_name,
                         "node_type": node.node_type,
                         "structural_path": context_path,
+                        "token_count": self.token_optimizer.count_tokens(sub_text),
                         **node.metadata
-                    }
-                    
+                        }
+        
                     rendered = RenderedChunk(
                         chunk_id=f"chk_{uuid.uuid4().hex[:8]}",
                         parent_node_id=node.node_id,
                         text=enriched_text,
                         metadata=chunk_metadata
-                    )
+                        )
                     chunk_accumulator.append(rendered)
         
         elif node.node_type == NodeType.TABLE:
