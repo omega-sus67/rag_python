@@ -2,15 +2,16 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from typing import List, Union, Dict, Any
 import re
+from app.core.config import settings
 
 
 class SemanticEngine:
     def __init__(self):
-        self.model = SentenceTransformer("BAAI/bge-base-en-v1.5")
+        self.model = SentenceTransformer(settings.embedding_model)
 
     def get_embeddings(self, texts: List[str]) -> np.ndarray:
         if not texts:
-            return np.empty((0, 768))
+            return np.empty((0, settings.embedding_dimension))
         
         embeddings = self.model.encode(
             texts,
@@ -104,7 +105,7 @@ class SemanticBoundaryDetector:
         return chunks
 
 class SlidingSemanticChunker:
-    def __init__(self,vector_engine : SemanticEngine,window_size: int = 3,threshold_factor: float = 0.8):
+    def __init__(self, vector_engine: SemanticEngine, window_size: int = settings.window_size, threshold_factor: float = settings.threshold_factor):
         self.vector_engine = vector_engine
         self.window_size = window_size
         self.threshold_factor = threshold_factor
@@ -169,7 +170,7 @@ class SlidingSemanticChunker:
 
         return analysis
 
-    def generate_chunks(self, sentences: List[str], analysis: List[Dict[str, Any]], min_sentences: int = 2, min_words: int = 50) -> List[str]:
+    def generate_chunks(self, sentences: List[str], analysis: List[Dict[str, Any]], min_sentences: int = settings.min_sentences, min_words: int = settings.min_words) -> List[str]:
         chunks = []
         buffer = []
         

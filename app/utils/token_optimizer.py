@@ -1,9 +1,11 @@
 import tiktoken
 from typing import List, Dict, Any
 
+from app.core.config import settings
+
 class TokenSizeOptimizer:
     """Enforces absolute token count guardrails on raw text strings using forced overlapping splits."""
-    def __init__(self, encoding_name: str = "cl100k_base", max_tokens: int = 400, overlap_tokens: int = 100):
+    def __init__(self, encoding_name: str = "cl100k_base", max_tokens: int = settings.max_tokens, overlap_tokens: int = settings.overlap_tokens):
         self.tokenizer = tiktoken.get_encoding(encoding_name)
         self.max_tokens = max_tokens
         self.overlap_tokens = overlap_tokens

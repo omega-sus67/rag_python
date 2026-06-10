@@ -13,8 +13,7 @@ from pgvector.sqlalchemy import Vector
 from app.utils.pdf_operator import Document
 from app.engines.engine_operator import HierarchicalSemanticEngine, RenderedChunk
 from app.engines.semantic_engine import SemanticEngine
-
-ASYNC_DATABASE_URL = "postgresql+asyncpg://postgres:password@localhost:5433/tutorial_db"
+from app.core.config import settings
 
 Base = declarative_base()
 
@@ -33,7 +32,7 @@ class dbChunk(Base):
     file_id = Column(String, ForeignKey("files.id"))
     chunk_index = Column(Integer, nullable=False)
     text_data = Column(String, nullable=False)
-    embeddings = Column(Vector(768))
+    embeddings = Column(Vector(settings.embedding_dimension))
 
     @classmethod
     def from_rendered_chunk(cls, rendered_chunk: RenderedChunk, file_id: str, index: int, vector: List[float]):
@@ -50,26 +49,26 @@ class dbChunk(Base):
 class DatabaseManager:
     """Encapsulates database connection setup and core document operations."""
     
-    def __init__(self, database_url: str = ASYNC_DATABASE_URL):
+    def __init__(self, database_url: str = settings.async_database_url):
         self.engine = create_async_engine(database_url, echo=False)
         self.SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
         
     async def create_tables(self):
         """Initializes the database and creates all tables."""
-        temp_url = "postgresql+asyncpg://postgres:password@localhost:5433/postgres"
+        temp_url = settings.async_postgres_url
         async_temp_engine = create_async_engine(temp_url, isolation_level="AUTOCOMMIT")
         
         async with async_temp_engine.connect() as conn:
-            res = await conn.execute(text("SELECT 1 FROM pg_database WHERE datname='tutorial_db'"))
+            res = await conn.execute(text(f"SELECT 1 FROM pg_database WHERE datname='{settings.db_name}'"))
             if not res.scalar():
-                print("Database 'tutorial_db' does not exist. Creating it...")
-                await conn.execute(text("CREATE DATABASE tutorial_db"))
+                print(f"Database '{settings.db_name}' does not exist. Creating it...")
+                await conn.execute(text(f"CREATE DATABASE {settings.db_name}"))
             else:
-                print("Database 'tutorial_db' already exists.")
+                print(f"Database '{settings.db_name}' already exists.")
                 
         await async_temp_engine.dispose()
 
-        # Connect to 'tutorial_db' and create tables
+        # Connect to 'settings.db_name' and create tables
         async with self.engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
             await conn.run_sync(Base.metadata.create_all)
@@ -115,8 +114,8 @@ class RAGIngestionManager:
         # Initialize our unified chunking engine using the shared vector engine
         self.chunking_engine = HierarchicalSemanticEngine(
             vector_engine=self.vector_engine,
-            window_size=3,
-            threshold_factor=0.8
+            window_size=settings.window_size,
+            threshold_factor=settings.threshold_factor
         )
 
     async def ingest_document(self, raw_text: str, file_id: str, source_name: str) -> int:

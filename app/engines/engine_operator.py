@@ -4,6 +4,8 @@ from app.engines.semantic_engine import SemanticEngine, SlidingSemanticChunker
 from app.engines.chunking_engine import markdownParser, DocNode, NodeType
 from app.utils.token_optimizer import TokenSizeOptimizer
 
+from app.core.config import settings
+
 class RenderedChunk:
     def __init__(self, chunk_id: str, parent_node_id: str, text: str, metadata: Dict[str, Any]):
         self.chunk_id = chunk_id
@@ -16,7 +18,7 @@ class RenderedChunk:
 
 
 class HierarchicalSemanticEngine:
-    def __init__(self, vector_engine: SemanticEngine, window_size: int = 5, threshold_factor: float = 1.2):
+    def __init__(self, vector_engine: SemanticEngine, window_size: int = settings.window_size, threshold_factor: float = settings.threshold_factor):
         self.structure_parser = markdownParser()
         self.boundary_detector = SlidingSemanticChunker(
             vector_engine=vector_engine, 
