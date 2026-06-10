@@ -34,15 +34,13 @@ class HierarchicalSemanticEngine:
         return final_chunks
 
     def _decompose_node(self, node: DocNode, chunk_accumulator: List[RenderedChunk], source_name: str) -> None:
-        if node.node_type in [NodeType.PARAGRAPH, NodeType.ROOT, NodeType.HEADING, NodeType.LIST_ITEM]:
+        if node.node_type in [NodeType.PARAGRAPH, NodeType.LIST_ITEM]:
             sentences = self.boundary_detector.split_into_sentences(node.text)
             
             if len(sentences) > 0:
                 analysis = self.boundary_detector.compute_window_bounds(sentences)
                 semantic_blocks = self.boundary_detector.generate_chunks(sentences, analysis)
 
-                context_path = node.get_contextual_path()
-                
                 for block in semantic_blocks:
                     optimized_sub_texts = self.token_optimizer.optimize_block(block)
     
@@ -52,21 +50,21 @@ class HierarchicalSemanticEngine:
                     for sub_text in optimized_sub_texts:
                         enriched_text = f"Context: {context_prefix}\nContent: {sub_text}" if context_path else sub_text
         
-                    chunk_metadata = {
-                        "source": source_name,
-                        "node_type": node.node_type,
-                        "structural_path": context_path,
-                        "token_count": self.token_optimizer.count_tokens(sub_text),
-                        **node.metadata
+                        chunk_metadata = {
+                            "source": source_name,
+                            "node_type": node.node_type,
+                            "structural_path": context_path,
+                            "token_count": self.token_optimizer.count_tokens(sub_text),
+                            **node.metadata
                         }
         
-                    rendered = RenderedChunk(
-                        chunk_id=f"chk_{uuid.uuid4().hex[:8]}",
-                        parent_node_id=node.node_id,
-                        text=enriched_text,
-                        metadata=chunk_metadata
+                        rendered = RenderedChunk(
+                            chunk_id=f"chk_{uuid.uuid4().hex[:8]}",
+                            parent_node_id=node.node_id,
+                            text=enriched_text,
+                            metadata=chunk_metadata
                         )
-                    chunk_accumulator.append(rendered)
+                        chunk_accumulator.append(rendered)
         
         elif node.node_type == NodeType.TABLE:
             context_path = node.get_contextual_path()

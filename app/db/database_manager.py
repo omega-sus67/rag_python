@@ -33,7 +33,7 @@ class dbChunk(Base):
     file_id = Column(String, ForeignKey("files.id"))
     chunk_index = Column(Integer, nullable=False)
     text_data = Column(String, nullable=False)
-    embeddings = Column(Vector(384))
+    embeddings = Column(Vector(768))
 
     @classmethod
     def from_rendered_chunk(cls, rendered_chunk: RenderedChunk, file_id: str, index: int, vector: List[float]):
@@ -51,7 +51,7 @@ class DatabaseManager:
     """Encapsulates database connection setup and core document operations."""
     
     def __init__(self, database_url: str = ASYNC_DATABASE_URL):
-        self.engine = create_async_engine(database_url, echo=True)
+        self.engine = create_async_engine(database_url, echo=False)
         self.SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
         
     async def create_tables(self):

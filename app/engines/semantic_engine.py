@@ -6,11 +6,11 @@ import re
 
 class SemanticEngine:
     def __init__(self):
-        self.model = SentenceTransformer("multi-qa-MiniLM-L6-cos-v1")
+        self.model = SentenceTransformer("BAAI/bge-base-en-v1.5")
 
     def get_embeddings(self, texts: List[str]) -> np.ndarray:
         if not texts:
-            return np.empty((0, 384))
+            return np.empty((0, 768))
         
         embeddings = self.model.encode(
             texts,
@@ -50,7 +50,7 @@ class SemanticBoundaryDetector:
         if not text.strip() :
             return []
         
-        splits = re.split(r'(?<=[.!?])\s+', text.strip())
+        splits = re.split(r'(?<!\bMr\.)(?<!\bMrs\.)(?<!\bDr\.)(?<!\bSt\.)(?<!\bJr\.)(?<!\bSr\.)(?<!\b[A-Z]\.)(?<=[.!?])\s+', text.strip())
         return [s.strip() for s in splits if s.strip()]
     
     def detect_boundaries(self, sentences : List[str]) -> List[Dict[str, Any]] :
@@ -113,7 +113,7 @@ class SlidingSemanticChunker:
         if not text.strip() :
             return []
         
-        splits = re.split(r'(?<=[.!?])\s+', text.strip())
+        splits = re.split(r'(?<!\bMr\.)(?<!\bMrs\.)(?<!\bDr\.)(?<!\bSt\.)(?<!\bJr\.)(?<!\bSr\.)(?<!\b[A-Z]\.)(?<=[.!?])\s+', text.strip())
         return [s.strip() for s in splits if s.strip()]
 
     def compute_window_bounds(self, sentences : List[str]) -> List[Dict[str, Any]]:
@@ -169,17 +169,23 @@ class SlidingSemanticChunker:
 
         return analysis
 
-    def generate_chunks(self, sentences: List[str], analysis: List[Dict[str, Any]]) -> List[str]:
+    def generate_chunks(self, sentences: List[str], analysis: List[Dict[str, Any]], min_sentences: int = 2, min_words: int = 50) -> List[str]:
         chunks = []
         buffer = []
         
         for i, sentence in enumerate(sentences):
             buffer.append(sentence)
             if analysis[i]["is_boundary"]:
-                chunks.append(" ".join(buffer))
-                buffer = []
+                current_text = " ".join(buffer)
+                word_count = len(current_text.split())
+                if len(buffer) >= min_sentences or word_count >= min_words:
+                    chunks.append(current_text)
+                    buffer = []
                 
         if buffer:
-            chunks.append(" ".join(buffer))
+            current_text = " ".join(buffer)
+            word_count = len(current_text.split())
+            if len(buffer) >= min_sentences or word_count >= min_words:
+                chunks.append(current_text)
             
         return chunks

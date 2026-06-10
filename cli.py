@@ -99,7 +99,7 @@ async def query_document(file_id: str, query: str, top_k: int):
             console.print(f"[bold red]Unexpected Error:[/] {str(e)}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Hermes-style RAG Pipeline CLI")
+    parser = argparse.ArgumentParser(description="RAG Pipeline CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
     
     # Ingest command

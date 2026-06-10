@@ -102,10 +102,8 @@ class markdownParser:
                 if in_table:   
                     self._flush_table(current_parent, buffer, start_line)
                     in_table = False
-                # If we are not in a table, we simply append a space to the para_buffer 
-                # so that consecutive paragraphs don't squash their words together.
-                if para_buffer:
-                    para_buffer.append(" ")
+                else:
+                    self._flush_paragraph(current_parent, para_buffer, para_start_line)
                 continue
             
             if self.table_row_regex.match(strip_line):
