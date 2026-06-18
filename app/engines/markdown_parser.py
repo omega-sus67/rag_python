@@ -8,6 +8,7 @@ class NodeType:
     PARAGRAPH = "PARAGRAPH"
     TABLE = "TABLE"
     LIST_ITEM = "LIST_ITEM"
+    LIST = "LIST"
 
 class DocNode:
     def __init__(
@@ -83,15 +84,36 @@ class markdownParser:
         parent.add_child(paragraph_node)
         buffer.clear()
 
+    def _flush_list(
+        self,
+        parent: DocNode,
+        buffer: List[str],
+        start_line: int
+    ) -> None:
+        if not buffer:
+            return
+        list_text = "\n".join(buffer)
+        list_node = DocNode(
+            node_type=NodeType.LIST,
+            text=list_text,
+            level=parent.level,
+            metadata={"line_number": start_line}
+        )
+        parent.add_child(list_node)
+        buffer.clear()
+
     def parse(self, text : str) -> DocNode:
         root = DocNode(node_type = NodeType.ROOT, text = "ROOT_TEXT", level = 0 , metadata=None)
 
         buffer : List[str] = []
         para_buffer : List[str] = []
+        list_buffer : List[str] = []
         start_line : int = 0
         para_start_line : int = 0
+        list_start_line : int = 0
         current_parent : DocNode = root
         in_table : bool = False
+        in_list : bool = False
 
         lines = text.split("\n")
 
@@ -102,6 +124,9 @@ class markdownParser:
                 if in_table:   
                     self._flush_table(current_parent, buffer, start_line)
                     in_table = False
+                elif in_list:
+                    self._flush_list(current_parent, list_buffer, list_start_line)
+                    in_list = False
                 else:
                     self._flush_paragraph(current_parent, para_buffer, para_start_line)
                 continue
@@ -109,6 +134,9 @@ class markdownParser:
             if self.table_row_regex.match(strip_line):
                 if para_buffer:
                     self._flush_paragraph(current_parent, para_buffer, para_start_line)
+                if in_list:
+                    self._flush_list(current_parent, list_buffer, list_start_line)
+                    in_list = False
                 if not in_table:
                     in_table = True
                     start_line = i
@@ -122,6 +150,9 @@ class markdownParser:
             if heading_match:
                 if para_buffer:
                     self._flush_paragraph(current_parent, para_buffer, para_start_line)
+                if in_list:
+                    self._flush_list(current_parent, list_buffer, list_start_line)
+                    in_list = False
                 hashes, heading_text = heading_match.groups()
                 level = len(hashes)
 
@@ -137,19 +168,18 @@ class markdownParser:
                 current_parent = heading_node
                 continue
             
-            list_match = self.list_regex.match(strip_line)
+            list_match = self.list_regex.match(line)
             if list_match:
                 if para_buffer:
                     self._flush_paragraph(current_parent, para_buffer, para_start_line)
-                indent, list_item_text = list_match.groups()
-                listNode = DocNode(
-                    node_type = NodeType.LIST_ITEM,
-                    text = list_item_text,
-                    level = current_parent.level,
-                    metadata = {"line_number": i, "indentation" : len(indent)}
-                )
-                current_parent.add_child(listNode)
+                if not in_list:
+                    in_list = True
+                    list_start_line = i
+                list_buffer.append(line)
                 continue
+            elif in_list:
+                self._flush_list(current_parent, list_buffer, list_start_line)
+                in_list = False
 
             if not para_buffer:
                 para_start_line = i
@@ -157,6 +187,8 @@ class markdownParser:
 
         if in_table:
             self._flush_table(current_parent, buffer, start_line)
+        if in_list:
+            self._flush_list(current_parent, list_buffer, list_start_line)
         if para_buffer:
             self._flush_paragraph(current_parent, para_buffer, para_start_line)
             

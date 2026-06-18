@@ -44,10 +44,11 @@ class TokenSizeOptimizer:
             # Advance our pointer forward, subtracting the overlap window
             if end_idx == total_tokens:
                 break
+            prev_start_idx = start_idx
             start_idx = end_idx - self.overlap_tokens
             
             # Defensive guard: prevent infinite loops if misconfigured
-            if start_idx >= end_idx:
+            if start_idx >= end_idx or start_idx <= prev_start_idx:
                 start_idx = end_idx
 
         return sub_blocks

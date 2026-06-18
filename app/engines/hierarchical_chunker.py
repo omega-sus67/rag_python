@@ -1,7 +1,7 @@
 import uuid
 from typing import List, Dict, Any
-from app.engines.semantic_engine import SemanticEngine, SlidingSemanticChunker
-from app.engines.chunking_engine import markdownParser, DocNode, NodeType
+from app.engines.semantic_chunker import SemanticEngine, SlidingSemanticChunker
+from app.engines.markdown_parser import markdownParser, DocNode, NodeType
 from app.utils.token_optimizer import TokenSizeOptimizer
 
 from app.core.config import settings
@@ -68,6 +68,27 @@ class HierarchicalSemanticEngine:
                         )
                         chunk_accumulator.append(rendered)
         
+        elif node.node_type == NodeType.LIST:
+            context_path = node.get_contextual_path()
+            context_prefix = " > ".join(context_path)
+            optimized_sub_texts = self.token_optimizer.optimize_block(node.text)
+            for sub_text in optimized_sub_texts:
+                enriched_text = f"Context: {context_prefix}\nContent:\n{sub_text}" if context_path else sub_text
+                chunk_metadata = {
+                    "source": source_name,
+                    "node_type": NodeType.LIST,
+                    "structural_path": context_path,
+                    "token_count": self.token_optimizer.count_tokens(sub_text),
+                    **node.metadata
+                }
+                rendered = RenderedChunk(
+                    chunk_id=f"chk_{uuid.uuid4().hex[:8]}",
+                    parent_node_id=node.node_id,
+                    text=enriched_text,
+                    metadata=chunk_metadata
+                )
+                chunk_accumulator.append(rendered)
+
         elif node.node_type == NodeType.TABLE:
             context_path = node.get_contextual_path()
             context_prefix = " > ".join(context_path)

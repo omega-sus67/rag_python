@@ -1,8 +1,8 @@
 from fastapi import HTTPException
-from app.utils.pdf_operator import parsePdf
+from app.utils.pdf_extractor import parsePdf
 from app.db.database_manager import DatabaseManager, RAGIngestionManager
 from app.db.retrieval_manager import HierarchicalRAGRetriever
-from app.engines.semantic_engine import SemanticEngine
+from app.engines.semantic_chunker import SemanticEngine
 
 class MainController:
     """

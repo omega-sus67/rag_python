@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 # Assuming pgvector provides the cosine_distance operator via its SQLAlchemy extension
 from pgvector.sqlalchemy import Vector
 
-from app.engines.semantic_engine import SemanticEngine
+from app.engines.semantic_chunker import SemanticEngine
 from app.db.database_manager import dbChunk
 
 class HierarchicalRAGRetriever:

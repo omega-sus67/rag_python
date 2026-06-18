@@ -1,10 +1,10 @@
 # RAG Pipeline — Engine Documentation
 
-This document explains every class and method in `semantic_engine.py`, `chunking_engine.py`, and `engine_operator.py`. For each method, it details how it changes the document, what information it provides for the RAG pipeline, and provides a line-by-line explanation of its operations on arguments and its return values.
+This document explains every class and method in `semantic_chunker.py`, `markdown_parser.py`, and `hierarchical_chunker.py`. For each method, it details how it changes the document, what information it provides for the RAG pipeline, and provides a line-by-line explanation of its operations on arguments and its return values.
 
 ---
 
-## File: `semantic_engine.py`
+## File: `semantic_chunker.py`
 
 ### Class: `SemanticEngine`
 
@@ -74,10 +74,10 @@ This document explains every class and method in `semantic_engine.py`, `chunking
 
 ---
 
-## File: `chunking_engine.py`
+## File: `markdown_parser.py`
 
 ### Class: `NodeType`
-*(This class contains only string constants and no methods.)*
+*(This class contains only string constants representing ROOT, HEADING, PARAGRAPH, TABLE, LIST_ITEM, and LIST.)*
 
 ### Class: `DocNode`
 
@@ -113,14 +113,24 @@ This document explains every class and method in `semantic_engine.py`, `chunking
 **What information it provides for the RAG pipeline:** Provides intact table chunks to the pipeline, preserving tabular row and column structures without semantically splitting them.
 **Line-by-line explanation:** Line 56 joins the strings inside the `buffer` list using newlines to create a unified `table_text` string. Lines 57-62 construct a new `DocNode` with type `TABLE`, the combined text, the `parent`'s level, and a metadata dictionary containing the starting line number and total row count. Line 63 invokes `parent.add_child` to attach this new table node to the document tree. Line 64 clears the `buffer` to ready it for any future tables. It returns `None`.
 
+#### `_flush_paragraph(self, parent: DocNode, buffer: List[str], start_line: int) -> None`
+**How it changes the document:** It groups lines of a paragraph together.
+**What information it provides for the RAG pipeline:** Accumulates normal text paragraphs as a single node in the document tree.
+**Line-by-line explanation:** Joins buffer lines using a space to construct continuous prose text, instantiates a `NodeType.PARAGRAPH` node with starting line metadata, appends it as a child to `parent`, and clears the buffer.
+
+#### `_flush_list(self, parent: DocNode, buffer: List[str], start_line: int) -> None`
+**How it changes the document:** It groups consecutive list item lines into a single LIST node.
+**What information it provides for the RAG pipeline:** Prevents list item fracturing, keeping lists intact for coherent semantic retrieval.
+**Line-by-line explanation:** Joins accumulated list lines using a newline (preserving indentations and bullet formats), instantiates a `NodeType.LIST` node, appends it to `parent`, and clears the buffer.
+
 #### `parse(self, text: str) -> DocNode`
 **How it changes the document:** It transforms flat, unstructured markdown text into a robust hierarchical node tree representation.
 **What information it provides for the RAG pipeline:** Provides the complete structural skeleton of the entire document, setting the stage for context-aware chunking.
-**Line-by-line explanation:** Line 67 instantiates a `ROOT` `DocNode` to serve as the tree's base. Lines 69-72 set up an empty `buffer` for tables, a `start_line` integer, a `current_parent` pointer initialized to the root, and an `in_table` boolean flag set to `False`. Line 74 splits the input `text` by newlines into a list of strings. Lines 76-130 iterate over each `line` alongside its index `i`. Line 77 creates a stripped version of the line. Lines 79-83 manage empty lines; if the parser is currently `in_table`, it flushes the table buffer, resets the flag, and continues to the next iteration. Lines 85-94 manage table formatting; if the line matches the table regex, it toggles `in_table` to `True`, records the `start_line`, appends the line to the `buffer`, and continues; conversely, if the line does not match but the parser is `in_table`, it flushes the table and resets the flag. Lines 95-110 handle heading lines; if a match occurs, it counts the hashes to determine the `level`, extracts the heading text, creates a `HEADING` `DocNode`, traverses up the `current_parent`'s lineage until it finds a parent with a level strictly lower than the new heading, adds the new heading node as a child, and updates `current_parent` to point to this new heading. Lines 111-121 handle list items; on a regex match, it extracts the indentation and text, creates a `LIST_ITEM` node with corresponding metadata, and adds it as a child to the `current_parent`. Lines 123-129 process any remaining lines as standard paragraphs, creating a `PARAGRAPH` node and appending it to the `current_parent`. Lines 131-132 check if a table was left unflushed at the very end of the document and flush it if so. Line 134 returns the `root` node, which now contains the entire document structure.
+**Line-by-line explanation:** Instantiates a `ROOT` `DocNode` to serve as the tree's base. It iterates over each line, buffering tables, paragraphs, and lists. Blank lines, new headings, or other constructs trigger the flushing of open buffers (via `_flush_table`, `_flush_paragraph`, or `_flush_list`). Heading matches traverse up the lineage to establish hierarchy based on hash levels. List items are grouped consecutively into the list buffer. The method returns the root node representing the structured document tree.
 
 ---
 
-## File: `engine_operator.py`
+## File: `hierarchical_chunker.py`
 
 ### Class: `RenderedChunk`
 
@@ -149,4 +159,4 @@ This document explains every class and method in `semantic_engine.py`, `chunking
 #### `_decompose_node(self, node: DocNode, chunk_accumulator: List[RenderedChunk], source_name: str) -> None`
 **How it changes the document:** It dissects a document node into semantic chunks and injects its structural heading path directly into the chunk's text representation.
 **What information it provides for the RAG pipeline:** Provides the core processing logic that ensures every text chunk sent to the vector database retains self-explanatory structural context.
-**Line-by-line explanation:** Line 36 checks if the `node`'s type is one of PARAGRAPH, ROOT, HEADING, or LIST_ITEM. Line 37 uses the `boundary_detector` to split the node's text into an array of sentences. Line 39 proceeds only if the sentences array contains elements. Lines 40-41 use the `boundary_detector` to compute window bounds and then generate semantic blocks (chunks) from those sentences. Line 43 calls `node.get_contextual_path()` to retrieve the structural breadcrumb trail. Lines 45-62 iterate over the generated `semantic_blocks`; inside the loop, it creates a `context_prefix` by joining the path with " > ", creates an `enriched_text` string that prefixes the context to the block's content, builds a `chunk_metadata` dictionary carrying the source, node type, and path, instantiates a `RenderedChunk` with a generated UUID, the enriched text, and metadata, and appends it to the `chunk_accumulator` list. Lines 64-75 specifically address nodes of type `TABLE`; it gathers the contextual path, forms an `enriched_text` string formatting the entire table, creates a single `RenderedChunk` encapsulating the table data, and appends it to the accumulator. Lines 77-78 execute a loop that recursively calls `_decompose_node` on every child in the `node.children` list. It returns `None`, mutating the provided `chunk_accumulator` list in place.
+**Line-by-line explanation:** Traverses the AST recursively. PARAGRAPH nodes are split using `SlidingSemanticChunker` sentence clustering and token limits. LIST nodes are treated as cohesive semantic blocks, processed as a unit, and safely split only if exceeding max token limits. TABLE nodes are converted into structured block text. All chunks are enriched with contextual breadcrumbs (e.g., `Context: H1 > H2`) prepended to the text, and appended to the final chunk accumulator.

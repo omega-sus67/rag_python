@@ -5,3 +5,6 @@ __pycache__/
 fast_api.py
 postgres_tutorial.py
 trialData/
+dev_log.md
+rag_pipeline_review.md
+.gitignore

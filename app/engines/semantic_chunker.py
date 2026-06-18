@@ -45,13 +45,13 @@ class SemanticBoundaryDetector:
     def __init__(self,vector_engine : SemanticEngine, threshold_factor : float = 0.8):
         self.vector_engine = vector_engine
         self.threshold_factor = threshold_factor
-        self.sentence_end_regex = re.compile(r'(?<!\b\p{Lu}\b)(?<!\b\p{L}{1,3}\.)(?<=[.!?])\s+(?=\p{Lu})', re.UNICODE)
+        self.sentence_end_regex = re.compile(r'(?<!\b[A-Z]\b)(?<!\b[a-zA-Z]\.)(?<!\b[a-zA-Z][a-zA-Z]\.)(?<!\b[a-zA-Z][a-zA-Z][a-zA-Z]\.)(?<=[.!?])\s+(?=[A-Z])')
     
     def split_into_sentences(self, text : str) -> List[str] :
         if not text.strip() :
             return []
         
-        splits = re.split(r'(?<!\bMr\.)(?<!\bMrs\.)(?<!\bDr\.)(?<!\bSt\.)(?<!\bJr\.)(?<!\bSr\.)(?<!\b[A-Z]\.)(?<=[.!?])\s+', text.strip())
+        splits = re.split(r'(?<!\bMr\.)(?<!\bMrs\.)(?<!\bDr\.)(?<!\bSt\.)(?<!\bJr\.)(?<!\bSr\.)(?<!\s[A-Z]\.)(?<!^[A-Z]\.)(?<=[.!?])\s+', text.strip())
         return [s.strip() for s in splits if s.strip()]
     
     def detect_boundaries(self, sentences : List[str]) -> List[Dict[str, Any]] :
@@ -114,7 +114,7 @@ class SlidingSemanticChunker:
         if not text.strip() :
             return []
         
-        splits = re.split(r'(?<!\bMr\.)(?<!\bMrs\.)(?<!\bDr\.)(?<!\bSt\.)(?<!\bJr\.)(?<!\bSr\.)(?<!\b[A-Z]\.)(?<=[.!?])\s+', text.strip())
+        splits = re.split(r'(?<!\bMr\.)(?<!\bMrs\.)(?<!\bDr\.)(?<!\bSt\.)(?<!\bJr\.)(?<!\bSr\.)(?<!\s[A-Z]\.)(?<!^[A-Z]\.)(?<=[.!?])\s+', text.strip())
         return [s.strip() for s in splits if s.strip()]
 
     def compute_window_bounds(self, sentences : List[str]) -> List[Dict[str, Any]]:

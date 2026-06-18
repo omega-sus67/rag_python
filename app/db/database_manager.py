@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from pgvector.sqlalchemy import Vector
 
 # Import our custom classes from earlier phases
-from app.utils.pdf_operator import Document
-from app.engines.engine_operator import HierarchicalSemanticEngine, RenderedChunk
-from app.engines.semantic_engine import SemanticEngine
+from app.utils.pdf_extractor import Document
+from app.engines.hierarchical_chunker import HierarchicalSemanticEngine, RenderedChunk
+from app.engines.semantic_chunker import SemanticEngine
 from app.core.config import settings
 
 Base = declarative_base()
@@ -133,7 +133,7 @@ class RAGIngestionManager:
         final_texts_to_embed = [chunk.text for chunk in rendered_chunks]
 
         # Step 3: Compute the fresh, clean, final ingestion embeddings in bulk batches
-        # Assuming vector_engine has get_embeddings based on semantic_engine.py
+        # Assuming vector_engine has get_embeddings based on semantic_chunker.py
         ingestion_embeddings = self.vector_engine.get_embeddings(final_texts_to_embed)
 
         # Step 4: Map the DTO chunks and their vectors to our dbChunk models
