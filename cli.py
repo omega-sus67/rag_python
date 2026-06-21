@@ -12,9 +12,16 @@ from rich.prompt import Prompt
 from app.controllers.main_controller import MainController
 from fastapi import HTTPException
 
+# Initialize global rich terminal console.
 console = Console()
 
 async def ingest_document(filepath: str):
+    """
+    Ingestion handler for CLI:
+    1. Checks if the PDF filepath exists locally.
+    2. Runs systems init and document parsing.
+    3. Handles and logs error responses.
+    """
     if not os.path.exists(filepath):
         console.print(f"[bold red]Error:[/] File not found at '{filepath}'")
         sys.exit(1)
@@ -23,6 +30,7 @@ async def ingest_document(filepath: str):
     
     controller = MainController()
     
+    # Use Rich Progress context to keep the terminal interactive during processing.
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -52,6 +60,12 @@ async def ingest_document(filepath: str):
             console.print(f"[bold red]Unexpected Error:[/] {str(e)}")
 
 async def query_document(file_id: str, query: str, top_k: int):
+    """
+    Retrieval and presentation handler for CLI:
+    1. Fetches document metadata.
+    2. Runs vector similarity search.
+    3. Prints colorized result panels based on similarity score ranges.
+    """
     console.print(Panel(f"[bold cyan]RAG Pipeline[/] - Semantic Search\n[dim]Querying Document: {file_id}[/]", border_style="cyan"))
     
     controller = MainController()
@@ -67,7 +81,7 @@ async def query_document(file_id: str, query: str, top_k: int):
         progress.update(task, description=f"[cyan]Searching for top {top_k} matches...")
         
         try:
-            # First, fetch doc to make sure it exists
+            # Check document existence before querying.
             doc = await controller.fetch_document(file_id)
             console.print(f"Searching in: [bold]{doc.title}[/]\n")
             
@@ -79,7 +93,7 @@ async def query_document(file_id: str, query: str, top_k: int):
                 
             for i, res in enumerate(results, 1):
                 sim_score = res['similarity']
-                # Color code the score
+                # Determine score coloring based on thresholds (green for strong match, red for weak).
                 score_color = "green" if sim_score > 0.5 else "yellow" if sim_score > 0.3 else "red"
                 
                 content = Text()
@@ -99,14 +113,15 @@ async def query_document(file_id: str, query: str, top_k: int):
             console.print(f"[bold red]Unexpected Error:[/] {str(e)}")
 
 def main():
+    """Entrypoint parsing CLI arguments and routing calls to respective async handlers."""
     parser = argparse.ArgumentParser(description="RAG Pipeline CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
     
-    # Ingest command
+    # Ingest command subcommand.
     ingest_parser = subparsers.add_parser("ingest", help="Ingest a PDF document into the database")
     ingest_parser.add_argument("filepath", type=str, help="Path to the PDF file")
     
-    # Query command
+    # Query command subcommand.
     query_parser = subparsers.add_parser("query", help="Query an ingested document")
     query_parser.add_argument("file_id", type=str, help="The Document ID to query")
     query_parser.add_argument("query_text", type=str, help="Your semantic search query")
@@ -114,6 +129,7 @@ def main():
     
     args = parser.parse_args()
     
+    # Command routing using async run loops.
     if args.command == "ingest":
         asyncio.run(ingest_document(args.filepath))
     elif args.command == "query":

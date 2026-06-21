@@ -4,15 +4,24 @@ from typing import List, Union, Dict, Any
 import re
 from app.core.config import settings
 
-
 class SemanticEngine:
+    """
+    Handles text-to-vector embedding generation and mathematical similarity calculations.
+    Wraps the SentenceTransformer model for centralized encoding.
+    """
     def __init__(self):
+        # Load embedding model defined in the global application settings.
         self.model = SentenceTransformer(settings.embedding_model)
 
     def get_embeddings(self, texts: List[str]) -> np.ndarray:
+        """
+        Generates normalized dense vector embeddings for a list of string segments.
+        Handles empty input lists gracefully by returning a correctly-shaped empty matrix.
+        """
         if not texts:
             return np.empty((0, settings.embedding_dimension))
         
+        # Batch-encode texts. Normalize embeddings to unit L2 length (speeds up cosine calculations).
         embeddings = self.model.encode(
             texts,
             convert_to_numpy=True,
@@ -21,33 +30,55 @@ class SemanticEngine:
             normalize_embeddings=True
         )
         return embeddings
+
     @staticmethod
     def calculate_cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
+        """
+        Calculates cosine similarity between two 1D vector arrays.
+        Protects against zero-norm inputs (division by zero) by returning 0.0.
+        """
         dot_product = np.dot(vec_a, vec_b)
         norm_a = np.linalg.norm(vec_a)
         norm_b = np.linalg.norm(vec_b)
         
+        # Guard against zero-length vectors to avoid numerical errors/NaNs.
         if norm_a == 0.0 or norm_b == 0.0:
             return 0.0
 
         return float(dot_product / (norm_a * norm_b))   
+
     @staticmethod
     def calculate_similarity_matrix(embeddings: np.ndarray) -> np.ndarray:
-
+        """
+        Efficiently calculates all pairwise cosine similarities for a matrix of embeddings
+        using vectorized matrix multiplication.
+        """
+        # Compute L2 norms along the horizontal axis (each embedding row).
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        # Avoid division by zero by setting any zero norms to 1.0.
         norms[norms == 0.0] = 1.0
         normalized_embeddings = embeddings / norms
  
+        # The dot product of normalized matrices yields the complete pairwise similarity matrix.
         similarity_matrix = np.dot(normalized_embeddings, normalized_embeddings.T)
         return similarity_matrix
 
 class SemanticBoundaryDetector:
-    def __init__(self,vector_engine : SemanticEngine, threshold_factor : float = 0.8):
+    """
+    Detects topic shifts by comparing semantic distance between adjacent sentence pairs.
+    Splits text when distance exceeds a dynamically computed standard deviation threshold.
+    """
+    def __init__(self, vector_engine : SemanticEngine, threshold_factor : float = 0.8):
         self.vector_engine = vector_engine
         self.threshold_factor = threshold_factor
+        # Looks for sentence endings followed by spaces and a capital letter, excluding common abbreviations.
         self.sentence_end_regex = re.compile(r'(?<!\b[A-Z]\b)(?<!\b[a-zA-Z]\.)(?<!\b[a-zA-Z][a-zA-Z]\.)(?<!\b[a-zA-Z][a-zA-Z][a-zA-Z]\.)(?<=[.!?])\s+(?=[A-Z])')
     
     def split_into_sentences(self, text : str) -> List[str] :
+        """
+        Splits text block into sentences using negative lookbehind assertions to ignore
+        punctuation that belongs to common abbreviations (e.g. Mr., Mrs., Dr.).
+        """
         if not text.strip() :
             return []
         
@@ -55,26 +86,35 @@ class SemanticBoundaryDetector:
         return [s.strip() for s in splits if s.strip()]
     
     def detect_boundaries(self, sentences : List[str]) -> List[Dict[str, Any]] :
-
+        """
+        Analyzes semantic differences between adjacent sentences.
+        Identifies boundaries using a dynamic threshold (mean distance + factor * std dev).
+        """
+        # Edge case: If we have fewer than 2 sentences, we cannot compare adjacencies.
         if len(sentences) < 2:
             return [{"sentence": s, "distance_to_next": 0.0, "is_boundary": False} for s in sentences]
         
+        # Embed all sentences to compare their semantic distance.
         embeddings = self.vector_engine.get_embeddings(sentences)
 
         distances = []
 
+        # Loop calculates the distance (1.0 - similarity) between each consecutive sentence pair.
         for i in range(len(sentences) - 1) :
             sim = self.vector_engine.calculate_cosine_similarity(embeddings[i], embeddings[i + 1])
             distances.append(1.0 - sim)
             mean_dist = float(np.mean(distances))
         
+        # Calculate deviation to construct a statistical threshold for detecting outliers (boundaries).
         std_dist = float(np.std(distances)) if len(distances) > 1 else 0.0
         dynamic_threshold = mean_dist + (self.threshold_factor * std_dist)
 
         results = []
+        # Build boundary analysis mappings.
         for i, sentence in enumerate(sentences):
             if i < len(distances):
                 dist = distances[i]
+                # If distance exceeds our statistical threshold, mark a boundary.
                 is_boundary = dist > dynamic_threshold
             else:
                 dist = 0.0
@@ -90,27 +130,40 @@ class SemanticBoundaryDetector:
         return results
     
     def cluster_sentences(self, sentences: List[str], boundary_analysis: List[Dict[str, Any]]) -> List[str]:
+        """
+        Iterates over sentences and joins them into larger chunks.
+        Splits and starts a new chunk whenever a boundary index is encountered.
+        """
         chunks = []
         current_chunk_sentences = []
 
         for i, sentence in enumerate(sentences):
             current_chunk_sentences.append(sentence)
+            # When boundary is True, flush the current list of sentences as a single chunk.
             if boundary_analysis[i]["is_boundary"]:
                 chunks.append(" ".join(current_chunk_sentences))
                 current_chunk_sentences = []
 
+        # Flush any remaining sentences after processing loop.
         if current_chunk_sentences:
             chunks.append(" ".join(current_chunk_sentences))
 
         return chunks
 
 class SlidingSemanticChunker:
+    """
+    A more robust chunker that compares contextual 'left' and 'right' windows of sentences.
+    Provides smoother transitions and prevents narrow local semantic shifts from over-segmenting.
+    """
     def __init__(self, vector_engine: SemanticEngine, window_size: int = settings.window_size, threshold_factor: float = settings.threshold_factor):
         self.vector_engine = vector_engine
         self.window_size = window_size
         self.threshold_factor = threshold_factor
 
     def split_into_sentences(self, text : str) -> List[str] :
+        """
+        Identical sentence splitter logic using negative lookbehinds for abbreviations.
+        """
         if not text.strip() :
             return []
         
@@ -118,15 +171,23 @@ class SlidingSemanticChunker:
         return [s.strip() for s in splits if s.strip()]
 
     def compute_window_bounds(self, sentences : List[str]) -> List[Dict[str, Any]]:
+        """
+        Computes sliding window semantic differences.
+        Compares joined left and right windows of size window_size.
+        """
         num_sentences = len(sentences)
+        # Guard clause: If text has fewer sentences than the window size on both sides,
+        # we don't have enough context to compare windows. Return default non-boundaries.
         if num_sentences < (self.window_size * 2):
             return [{"index": i, "distance": 0.0, "is_boundary": False} for i in range(num_sentences)]
 
         left_window_strings = []
         right_window_strings = []
         
+        # Valid indexes where we can fit a full left and right window.
         valid_split_indices = list(range(self.window_size - 1, num_sentences - self.window_size))
         
+        # Build windows by joining sentences.
         for idx in valid_split_indices:
             left_win = sentences[idx - self.window_size + 1 : idx + 1]
             right_win = sentences[idx + 1 : idx + 1 + self.window_size]
@@ -134,6 +195,7 @@ class SlidingSemanticChunker:
             left_window_strings.append(" ".join(left_win))
             right_window_strings.append(" ".join(right_win))
 
+        # Bulk embed window contents to minimize API/model invocation roundtrips.
         left_embeddings = self.vector_engine.get_embeddings(left_window_strings)
         right_embeddings = self.vector_engine.get_embeddings(right_window_strings)
 
@@ -142,12 +204,14 @@ class SlidingSemanticChunker:
             sim = self.vector_engine.calculate_cosine_similarity(left_embeddings[i], right_embeddings[i])
             window_distances.append(1.0 - sim)
 
+        # Dynamic statistical threshold.
         mean_dist = float(np.mean(window_distances))
         std_dist = float(np.std(window_distances)) if len(window_distances) > 1 else 0.0
         dynamic_threshold = mean_dist + (self.threshold_factor * std_dist)
 
         boundary_map = {i: False for i in range(num_sentences)}
         
+        # Mark index as a boundary if window distance exceeds the calculated statistical threshold.
         for i, idx in enumerate(valid_split_indices):
             if window_distances[i] > dynamic_threshold:
                 boundary_map[idx] = True
@@ -155,6 +219,7 @@ class SlidingSemanticChunker:
         analysis = []
         distance_idx_ptr = 0
         for i in range(num_sentences):
+            # Map distance values only to indices that could be evaluated with full windows.
             if i in valid_split_indices:
                 dist = window_distances[distance_idx_ptr]
                 distance_idx_ptr += 1
@@ -171,18 +236,26 @@ class SlidingSemanticChunker:
         return analysis
 
     def generate_chunks(self, sentences: List[str], analysis: List[Dict[str, Any]], min_sentences: int = settings.min_sentences, min_words: int = settings.min_words) -> List[str]:
+        """
+        Aggregates sentences into final chunks based on window boundaries.
+        Enforces minimum paragraph size constraints (sentence count or word count)
+        to prevent generating tiny, uninformative chunks.
+        """
         chunks = []
         buffer = []
         
         for i, sentence in enumerate(sentences):
             buffer.append(sentence)
+            # When boundary is detected, verify if the buffer meets the minimum size requirements.
             if analysis[i]["is_boundary"]:
                 current_text = " ".join(buffer)
                 word_count = len(current_text.split())
+                # If size is sufficient, finalize chunk; otherwise, accumulate further to preserve context.
                 if len(buffer) >= min_sentences or word_count >= min_words:
                     chunks.append(current_text)
                     buffer = []
                 
+        # Flush remainder if it meets size criteria or we are at the end.
         if buffer:
             current_text = " ".join(buffer)
             word_count = len(current_text.split())

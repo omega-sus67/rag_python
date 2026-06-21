@@ -1,44 +1,49 @@
-# retriever.py
+# retrieval_manager.py
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
-# Assuming pgvector provides the cosine_distance operator via its SQLAlchemy extension
+# Import pgvector Vector distance operator
 from pgvector.sqlalchemy import Vector
 
 from app.engines.semantic_chunker import SemanticEngine
 from app.db.database_manager import dbChunk
 
 class HierarchicalRAGRetriever:
-    """Handles high-performance semantic vector queries against the pgvector database schema."""
+    """
+    Handles semantic vector similarity queries against the pgvector database schema.
+    Retrieves the most contextually relevant chunks for a given user query.
+    """
     def __init__(self, db_session: AsyncSession, vector_engine: SemanticEngine):
         self.db = db_session
         self.vector_engine = vector_engine
 
     async def retrieve_relevant_chunks(self, query_text: str, file_id: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """
-        Converts a raw question into a vector coordinate and extracts 
-        the top_k closest structural text blocks from PostgreSQL.
+        Retrieves the top_k most similar database chunks:
+        1. Embeds the user question using the same embedding model.
+        2. Constructs a pgvector cosine_distance query scoped to the current file.
+        3. Executes the query and outputs records mapped with explicit similarity scores.
         """
-        # Step 1: Embed the user's incoming question using the exact same vector model
-        # This yields a 1D numpy array of shape (384,)
+        # Step 1: Embed the incoming query.
+        # This converts user text into a 1D vector (e.g. size 384).
         query_vector_ndarray = self.vector_engine.get_embeddings([query_text])[0]
         
-        # Convert the raw numpy array back into a plain Python list of floats for the SQL driver
+        # Convert the NumPy array representation into a standard float list for database execution.
         query_vector_list = query_vector_ndarray.tolist()
 
-        # Step 2: Construct the pgvector distance query
-        # We use the built-in '.cosine_distance()' operator provided by pgvector
-        # Formula running inside Postgres: 1 - CosineSimilarity
+        # Step 2: Set up the pgvector cosine distance database query.
+        # pgvector uses the .cosine_distance() method to compute vector difference in the database.
+        # Formula: Distance = 1.0 - CosineSimilarity. Lower distance means closer meaning.
         distance_expression = dbChunk.embeddings.cosine_distance(query_vector_list)
 
         query_statement = (
             select(dbChunk, distance_expression.label("distance"))
-            .where(dbChunk.file_id == file_id)  # Scope search to the target document
-            .order_by("distance")               # Ascending order: lowest distance means closest meaning
-            .limit(top_k)                       # Restrict results to protect our LLM context window
+            .where(dbChunk.file_id == file_id)  # Scope query to the target document
+            .order_by("distance")               # Order ascending so most similar chunks are first
+            .limit(top_k)                       # Enforce top_k limit to stay within LLM context boundaries
         )
 
-        # Step 3: Execute the transaction and package results
+        # Step 3: Run search query and package returned values.
         results = (await self.db.execute(query_statement)).all()
         
         matched_payloads = []
@@ -51,7 +56,8 @@ class HierarchicalRAGRetriever:
                 "chunk_index": chunk_record.chunk_index,
                 "text": chunk_record.text_data,
                 "distance": float(distance_score),
-                "similarity": float(1.0 - distance_score) # Invert distance back to a readable similarity score
+                # Convert distance back to similarity score (Similarity = 1.0 - Distance) for user display.
+                "similarity": float(1.0 - distance_score)
             })
 
         return matched_payloads

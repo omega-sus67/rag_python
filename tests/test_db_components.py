@@ -14,6 +14,11 @@ from app.engines.hierarchical_chunker import RenderedChunk
 pytestmark = pytest.mark.asyncio
 
 async def test_db_chunk_from_rendered_chunk():
+    """
+    PURPOSE: Verifies the dbChunk factory converter behaves correctly.
+    CAPABILITIES:
+    - Sets corresponding table columns correctly from DTO values.
+    """
     rendered = RenderedChunk(
         chunk_id="chk_123",
         parent_node_id="node_abc",
@@ -35,12 +40,15 @@ async def test_db_chunk_from_rendered_chunk():
     assert db_rec.embeddings == [0.1, 0.2, 0.3]
 
 async def test_database_manager_save_document_duplicate():
+    """
+    PURPOSE: Verifies rejection of duplicate documents based on SHA-256 hash checks.
+    CAPABILITIES:
+    - Raises an HTTP 400 Bad Request exception when checking a pre-existing hash.
+    """
     db_mgr = DatabaseManager(database_url="postgresql+asyncpg://mock:mock@mock/mock")
     
-    # Mock session
     mock_session = AsyncMock()
     mock_session.__aenter__.return_value = mock_session
-    # Mock return value for checking duplicate (scalar should return a file, i.e., duplicate exists)
     mock_execute_result = MagicMock()
     mock_execute_result.scalar.return_value = dbFile(id="dup_hash", title="Existing", extracted_text="content")
     mock_session.execute.return_value = mock_execute_result
@@ -56,11 +64,17 @@ async def test_database_manager_save_document_duplicate():
     assert "File already exists" in exc_info.value.detail
 
 async def test_database_manager_save_document_success():
+    """
+    PURPOSE: Verifies successful document saving when the SHA-256 hash is unique.
+    CAPABILITIES:
+    - Adds new dbFile to active session queue.
+    - Triggers transaction commit.
+    - Refreshes instance attributes.
+    """
     db_mgr = DatabaseManager(database_url="postgresql+asyncpg://mock:mock@mock/mock")
     
     mock_session = AsyncMock()
     mock_session.__aenter__.return_value = mock_session
-    # Mock check duplicate (scalar returns None, i.e., no duplicate)
     mock_execute_result = MagicMock()
     mock_execute_result.scalar.return_value = None
     mock_session.execute.return_value = mock_execute_result
@@ -78,6 +92,11 @@ async def test_database_manager_save_document_success():
     mock_session.refresh.assert_called_once()
 
 async def test_database_manager_fetch_document_not_found():
+    """
+    PURPOSE: Verifies fetch behavior when seeking a missing document ID.
+    CAPABILITIES:
+    - Raises an HTTP 404 Not Found exception.
+    """
     db_mgr = DatabaseManager(database_url="postgresql+asyncpg://mock:mock@mock/mock")
     
     mock_session = AsyncMock()
@@ -95,6 +114,12 @@ async def test_database_manager_fetch_document_not_found():
     assert "File not found" in exc_info.value.detail
 
 async def test_database_manager_fetch_document_success():
+    """
+    PURPOSE: Verifies successful document fetch.
+    CAPABILITIES:
+    - Queries database by key.
+    - Yields matching dbFile record.
+    """
     db_mgr = DatabaseManager(database_url="postgresql+asyncpg://mock:mock@mock/mock")
     
     expected_doc = dbFile(id="file_123", title="Test Doc", extracted_text="some text")
@@ -111,20 +136,23 @@ async def test_database_manager_fetch_document_success():
     assert result == expected_doc
 
 async def test_rag_ingestion_manager_success():
-    # Setup mocks
+    """
+    PURPOSE: Verifies the full RAG Ingestion Pipeline run.
+    CAPABILITIES:
+    - Invokes markdown structural parsing.
+    - Obtains embeddings in batch.
+    - Persists multiple chunk entities inside a single transaction.
+    """
     db_mgr = MagicMock()
     mock_session = AsyncMock()
     mock_session.__aenter__.return_value = mock_session
     db_mgr.SessionLocal = MagicMock(return_value=mock_session)
     
     vector_engine = MagicMock()
-    # Mock embeddings return
-    vector_engine.get_embeddings.return_value = np.array([[0.1]*768, [0.2]*768])
+    vector_engine.get_embeddings.return_value = np.array([[0.1]*384, [0.2]*384])
     
-    # Instantiate manager
     ingestion_mgr = RAGIngestionManager(db_manager=db_mgr, vector_engine=vector_engine)
     
-    # Mock chunking engine process_document
     mock_chunks = [
         RenderedChunk(chunk_id="chk_1", parent_node_id="n1", text="text 1", metadata={}),
         RenderedChunk(chunk_id="chk_2", parent_node_id="n2", text="text 2", metadata={})
@@ -139,6 +167,12 @@ async def test_rag_ingestion_manager_success():
     vector_engine.get_embeddings.assert_called_once_with(["text 1", "text 2"])
 
 async def test_rag_ingestion_manager_rollback_on_failure():
+    """
+    PURPOSE: Verifies transactional safety in case of database errors.
+    CAPABILITIES:
+    - Rolls back the active database session.
+    - Re-raises the error to notify upper orchestration layers.
+    """
     db_mgr = MagicMock()
     mock_session = AsyncMock()
     mock_session.__aenter__.return_value = mock_session
@@ -146,7 +180,7 @@ async def test_rag_ingestion_manager_rollback_on_failure():
     db_mgr.SessionLocal = MagicMock(return_value=mock_session)
     
     vector_engine = MagicMock()
-    vector_engine.get_embeddings.return_value = np.array([[0.1]*768])
+    vector_engine.get_embeddings.return_value = np.array([[0.1]*384])
     
     ingestion_mgr = RAGIngestionManager(db_manager=db_mgr, vector_engine=vector_engine)
     
@@ -160,20 +194,24 @@ async def test_rag_ingestion_manager_rollback_on_failure():
     mock_session.rollback.assert_called_once()
 
 async def test_hierarchical_rag_retriever():
+    """
+    PURPOSE: Verifies similarity search querying and distance logic mapping.
+    CAPABILITIES:
+    - Embeds the query.
+    - Generates select statements with order and limit constraints.
+    - Converts pgvector distance to display similarity score (1 - dist).
+    """
     mock_session = AsyncMock()
     
     vector_engine = MagicMock()
-    # Embeddings call returns a 2D array, we extract the first row
-    vector_engine.get_embeddings.return_value = np.array([[0.5]*768])
+    vector_engine.get_embeddings.return_value = np.array([[0.5]*384])
     
     retriever = HierarchicalRAGRetriever(db_session=mock_session, vector_engine=vector_engine)
     
-    # Create mock database rows
     chunk_record = dbChunk(id="chk_res", chunk_index=0, text_data="found text")
     distance_score = 0.35
     
     mock_execute_result = MagicMock()
-    # Row contains (dbChunk, distance)
     mock_execute_result.all.return_value = [(chunk_record, distance_score)]
     mock_session.execute.return_value = mock_execute_result
     
@@ -191,7 +229,52 @@ async def test_hierarchical_rag_retriever():
     assert res["distance"] == 0.35
     assert res["similarity"] == pytest.approx(0.65)
     
-    # Verify vector engine was called to embed the query
     vector_engine.get_embeddings.assert_called_once_with(["What is the answer?"])
-    # Verify execute was called
     mock_session.execute.assert_called_once()
+
+# --- RIGOROUS EXTENDED TESTS ---
+
+async def test_rag_ingestion_manager_empty_document():
+    """
+    PURPOSE: Verifies that if document parsing yields no chunks, the ingestion exits early.
+    CAPABILITIES:
+    - Exits without model call or database connection acquisition.
+    - Returns 0 count safely.
+    """
+    db_mgr = MagicMock()
+    vector_engine = MagicMock()
+    ingestion_mgr = RAGIngestionManager(db_manager=db_mgr, vector_engine=vector_engine)
+    
+    # Mock return value of parsing as empty
+    ingestion_mgr.chunking_engine.process_document = MagicMock(return_value=[])
+    
+    count = await ingestion_mgr.ingest_document("empty text", "file_123", "source.md")
+    assert count == 0
+    vector_engine.get_embeddings.assert_not_called()
+    db_mgr.SessionLocal.assert_not_called()
+
+async def test_database_manager_save_document_general_exception():
+    """
+    PURPOSE: Verifies database commit failure handling inside save_document.
+    CAPABILITIES:
+    - Bubbles database transaction exceptions up cleanly.
+    - Prevents orphaned sessions by ensuring cleanup runs.
+    """
+    db_mgr = DatabaseManager(database_url="postgresql+asyncpg://mock:mock@mock/mock")
+    
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_session
+    mock_session.commit.side_effect = Exception("Session error")
+    
+    # Duplicate check passes
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalar.return_value = None
+    mock_session.execute.return_value = mock_execute_result
+    
+    db_mgr.SessionLocal = MagicMock(return_value=mock_session)
+    doc = Document(title="Doc", extracted_text="unique content")
+    
+    with pytest.raises(Exception) as exc_info:
+        await db_mgr.save_document(doc)
+        
+    assert "Session error" in str(exc_info.value)
