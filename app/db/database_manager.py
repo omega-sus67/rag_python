@@ -136,7 +136,34 @@ class DatabaseManager:
             if not doc:
                 raise HTTPException(status_code=404, detail="File not found")
             return doc
+    
+    async def list_all_documents(self) -> List[dict]:
+        """
+        Retrieves a list of all ingested files.
+        This serves as a discovery tool for the Agent to know what content is available.
+        """
+        async with self.SessionLocal() as session:
+            statement = select(dbFile.id, dbFile.title)
+            results = await session.execute(statement)
+            return [{"id": row[0], "title": row[1]} for row in results.all()]
 
+    async def fetch_chunk_by_id(self, chunk_id: str) -> Optional[dict]:
+        """
+        Retrieves a specific chunk's raw content by its unique ID.
+        Useful when the agent needs to inspect a particular segment in detail.
+        """
+        async with self.SessionLocal() as session:
+            statement = select(dbChunk).where(dbChunk.id == chunk_id)
+            result = await session.execute(statement)
+            chunk = result.scalar()
+            if chunk:
+                return {
+                    "id": chunk.id,
+                    "file_id": chunk.file_id,
+                    "chunk_index": chunk.chunk_index,
+                    "text": chunk.text_data
+                }
+            return None
 
 class RAGIngestionManager:
     """

@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 from pgvector.sqlalchemy import Vector
 
 from app.engines.semantic_chunker import SemanticEngine
-from app.db.database_manager import dbChunk
+from app.db.database_manager import dbChunk, dbFile
 
 class HierarchicalRAGRetriever:
     """
@@ -57,6 +57,46 @@ class HierarchicalRAGRetriever:
                 "text": chunk_record.text_data,
                 "distance": float(distance_score),
                 # Convert distance back to similarity score (Similarity = 1.0 - Distance) for user display.
+                "similarity": float(1.0 - distance_score)
+            })
+
+        return matched_payloads
+    
+    async def retrieve_across_all_documents(self, query_text: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        Semantic vector similarity query across ALL documents in the database.
+        Merges results and maps them with source documents.
+        """
+        # 1. Embed incoming query
+        query_vector_ndarray = self.vector_engine.get_embeddings([query_text])[0]
+        query_vector_list = query_vector_ndarray.tolist()
+
+        # 2. Query pgvector cosine distance across all files, joining with the files table to get titles
+        distance_expression = dbChunk.embeddings.cosine_distance(query_vector_list)
+        
+        # We perform a join between doc_chunks and files so the agent knows which document each chunk came from
+        query_statement = (
+            select(dbChunk, dbFile.title, distance_expression.label("distance"))
+            .join(dbFile, dbChunk.file_id == dbFile.id)
+            .order_by("distance")
+            .limit(top_k)
+        )
+
+        results = (await self.db.execute(query_statement)).all()
+        
+        matched_payloads = []
+        for row in results:
+            chunk_record = row[0]
+            doc_title = row[1]
+            distance_score = row[2]
+            
+            matched_payloads.append({
+                "chunk_id": chunk_record.id,
+                "file_id": chunk_record.file_id,
+                "document_title": doc_title,
+                "chunk_index": chunk_record.chunk_index,
+                "text": chunk_record.text_data,
+                "distance": float(distance_score),
                 "similarity": float(1.0 - distance_score)
             })
 

@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     max_tokens: int = Field(default=400)
     overlap_tokens: int = Field(default=100)
 
+    # LLM Config
+    llm_provider: str = Field(default="gemini")
+    llm_api_key: str = Field(default="")
+    llm_api_base: str = Field(default="https://generativelanguage.googleapis.com/v1beta")
+    llm_model: str = Field(default="gemini-1.5-flash")
+    llm_temperature: float = Field(default=0.0)
+    agent_max_iterations: int = Field(default=5)
+
+
     @property
     def async_database_url(self) -> str:
         return f"postgresql+asyncpg://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"

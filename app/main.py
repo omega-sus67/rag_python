@@ -25,6 +25,9 @@ class DocumentResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class AgentQueryRequest(BaseModel):
+    query: str
+
 # Initialize FastAPI app with the orchestrated lifespan
 app = FastAPI(lifespan=lifespan)
 
@@ -46,3 +49,10 @@ async def getFileByID(id: str):
     Retrieves the raw document metadata by its hashed ID.
     """
     return await controller.fetch_document(id)
+
+@app.post("/agent/query")
+async def query_agent(request: AgentQueryRequest):
+    """
+    Solves user questions dynamically using a ReAct reasoning agent loop.
+    """
+    return await controller.ask_agent(request.query)

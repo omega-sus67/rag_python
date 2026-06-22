@@ -2,7 +2,8 @@ import argparse
 import asyncio
 import os
 import sys
-
+import json
+import re
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -112,6 +113,82 @@ async def query_document(file_id: str, query: str, top_k: int):
         except Exception as e:
             console.print(f"[bold red]Unexpected Error:[/] {str(e)}")
 
+async def start_agent_chat():
+    """
+    Launches an interactive shell enabling chat conversations with the ReAct Agent.
+    """
+    console.print(Panel(
+        "[bold cyan]Agentic RAG Engine - Interactive Chat[/]\n"
+        "Ask questions across all documents. The agent will show its reasoning steps.\n"
+        "[dim]Type 'exit' or 'quit' to close.[/]", 
+        border_style="cyan"
+    ))
+    
+    controller = MainController()
+    
+    # 1. Prepare system
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        transient=True,
+    ) as progress:
+        progress.add_task("[yellow]Initializing system...", total=None)
+        await controller.initialize_system()
+        
+    # 2. Main interactive input loop
+    while True:
+        try:
+            user_input = Prompt.ask("\n[bold green]You[/]")
+            if user_input.strip().lower() in ["exit", "quit"]:
+                console.print("[yellow]Exiting chat. Goodbye![/]")
+                break
+                
+            if not user_input.strip():
+                continue
+                
+            console.print("[dim]Thinking...[/]")
+            
+            # Execute Agent loop
+            result = await controller.ask_agent(user_input)
+            
+            # Print reasoning steps step-by-step
+            for step in result["steps"]:
+                iter_num = step["iteration"] + 1
+                
+                # Parse thought text for display
+                raw = step["llm_raw_response"]
+                thought_match = re.search(r"Thought:\s*(.*)", raw)
+                thought = thought_match.group(1).split("Action:")[0].strip() if thought_match else "Reasoning..."
+                
+                console.print(f"\n[bold yellow]Step {iter_num} - Thought:[/]")
+                console.print(Panel(thought, border_style="yellow"))
+                
+                if step.get("type") == "action":
+                    console.print(f"[bold magenta]Action: Calling Tool '{step['tool']}'[/]")
+                    console.print(f"[magenta]Inputs:[/] [dim]{step['input']}[/]")
+                    
+                    # Highlight tool observation result
+                    obs_snippet = step["observation"]
+                    # Limit long observations in display
+                    if len(obs_snippet) > 400:
+                        obs_snippet = obs_snippet[:400] + "\n... (truncated for readability)"
+                        
+                    console.print(Panel(obs_snippet, title="Observation", border_style="purple"))
+                    
+            # Print Final Answer
+            console.print("\n" + Panel(
+                result["answer"], 
+                title="[bold green]Final Answer[/]", 
+                border_style="green"
+            ))
+            
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Exiting chat. Goodbye![/]")
+            break
+        except Exception as e:
+            console.print(f"[bold red]Error:[/] {str(e)}")
+    
+
 def main():
     """Entrypoint parsing CLI arguments and routing calls to respective async handlers."""
     parser = argparse.ArgumentParser(description="RAG Pipeline CLI")
@@ -120,6 +197,7 @@ def main():
     # Ingest command subcommand.
     ingest_parser = subparsers.add_parser("ingest", help="Ingest a PDF document into the database")
     ingest_parser.add_argument("filepath", type=str, help="Path to the PDF file")
+    agent_parser = subparsers.add_parser("agent", help="Start an interactive reasoning agent chat session")
     
     # Query command subcommand.
     query_parser = subparsers.add_parser("query", help="Query an ingested document")
@@ -134,6 +212,8 @@ def main():
         asyncio.run(ingest_document(args.filepath))
     elif args.command == "query":
         asyncio.run(query_document(args.file_id, args.query_text, args.top))
+    elif args.command == "agent":
+        asyncio.run(start_agent_chat())
     else:
         parser.print_help()
 

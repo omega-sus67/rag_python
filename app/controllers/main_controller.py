@@ -3,6 +3,8 @@ from app.utils.pdf_extractor import parsePdf
 from app.db.database_manager import DatabaseManager, RAGIngestionManager
 from app.db.retrieval_manager import HierarchicalRAGRetriever
 from app.engines.semantic_chunker import SemanticEngine
+from app.core.config import settings
+from app.engines.agent_engine import ReActAgent
 
 class MainController:
     """
@@ -18,6 +20,11 @@ class MainController:
         
         # Tie database operations and vector encoding together via ingestion controller.
         self.ingestion_manager = RAGIngestionManager(
+            db_manager=self.db_manager,
+            vector_engine=self.vector_engine
+        )
+
+        self.agent = ReActAgent(
             db_manager=self.db_manager,
             vector_engine=self.vector_engine
         )
@@ -75,3 +82,15 @@ class MainController:
             retriever = HierarchicalRAGRetriever(db_session=session, vector_engine=self.vector_engine)
             results = await retriever.retrieve_relevant_chunks(query_text, file_id, top_k)
             return results
+
+    async def ask_agent(self, user_query: str) -> dict:
+        """
+        Routes queries through the ReAct agent.
+        Returns the final answer along with intermediate reasoning steps.
+        """
+        answer, steps = await self.agent.run(user_query)
+        return {
+            "query": user_query,
+            "answer": answer,
+            "steps": steps
+        }
