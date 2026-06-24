@@ -176,7 +176,8 @@ async def start_agent_chat():
                     console.print(Panel(obs_snippet, title="Observation", border_style="purple"))
                     
             # Print Final Answer
-            console.print("\n" + Panel(
+            console.print("\n");
+            console.print(Panel(
                 result["answer"], 
                 title="[bold green]Final Answer[/]", 
                 border_style="green"
@@ -188,7 +189,6 @@ async def start_agent_chat():
         except Exception as e:
             console.print(f"[bold red]Error:[/] {str(e)}")
     
-
 def main():
     """Entrypoint parsing CLI arguments and routing calls to respective async handlers."""
     parser = argparse.ArgumentParser(description="RAG Pipeline CLI")

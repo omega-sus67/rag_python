@@ -165,6 +165,28 @@ class DatabaseManager:
                 }
             return None
 
+    async def resolve_file_id(self, identifier: str) -> Optional[str]:
+        """
+        Resolves a document identifier.
+        1. Checks if the identifier is an exact match for a document's hash ID.
+        2. If not, checks if it matches a document's title (case-insensitive substring).
+        Returns the resolved SHA-256 hash ID, or None if no match is found.
+        """
+        async with self.SessionLocal() as session:
+            # 1. Check if it's a valid ID
+            statement = select(dbFile.id).where(dbFile.id == identifier)
+            result = await session.execute(statement)
+            resolved = result.scalar()
+            if resolved:
+                return resolved
+                
+            # 2. Check if it matches a title
+            statement = select(dbFile.id).where(dbFile.title.ilike(f"%{identifier}%"))
+            result = await session.execute(statement)
+            resolved = result.scalar()
+            return resolved
+
+    
 class RAGIngestionManager:
     """
     Coordinates markdown parsing, chunking, and bulk vector embedding generation,

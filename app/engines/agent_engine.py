@@ -29,7 +29,7 @@ class ReActAgent:
             ),
             "search_document": (
                 self._tool_search_document, 
-                "search_document(query: str, file_id: str) - Performs semantic vector search on a specific document. Input format: {\"query\": \"your search query\", \"file_id\": \"document_id\"}"
+                "search_document(query: str, file_id: str) - Performs semantic vector search on a specific document. file_id can be the document's unique hash ID or its title. Input format: {\"query\": \"your search query\", \"file_id\": \"document_id_or_title\"}"
             ),
             "read_chunk": (
                 self._tool_read_chunk, 
@@ -67,9 +67,16 @@ class ReActAgent:
         file_id = args.get("file_id")
         if not query or not file_id:
             return "Error: Both 'query' and 'file_id' parameters are required."
+            
+        # Resolve the identifier (which could be the hash ID or the document title)
+        resolved_file_id = await self.db_manager.resolve_file_id(file_id)
+        if not resolved_file_id:
+            return f"Error: Document matching identifier '{file_id}' not found. Please run 'list_documents' to see valid document titles and IDs."
+            
         async with self.db_manager.SessionLocal() as session:
             retriever = HierarchicalRAGRetriever(session, self.vector_engine)
-            results = await retriever.retrieve_relevant_chunks(query, file_id, top_k=4)
+            # Use the resolved hash ID for similarity search
+            results = await retriever.retrieve_relevant_chunks(query, resolved_file_id, top_k=4)
         
         formatted_results = []
         for r in results:
