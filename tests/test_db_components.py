@@ -149,22 +149,20 @@ async def test_rag_ingestion_manager_success():
     db_mgr.SessionLocal = MagicMock(return_value=mock_session)
     
     vector_engine = MagicMock()
-    vector_engine.get_embeddings.return_value = np.array([[0.1]*384, [0.2]*384])
     
     ingestion_mgr = RAGIngestionManager(db_manager=db_mgr, vector_engine=vector_engine)
     
     mock_chunks = [
-        RenderedChunk(chunk_id="chk_1", parent_node_id="n1", text="text 1", metadata={}),
-        RenderedChunk(chunk_id="chk_2", parent_node_id="n2", text="text 2", metadata={})
+        RenderedChunk(chunk_id="chk_1", parent_node_id="n1", text="text 1", metadata={}, embeddings=[0.1]*384),
+        RenderedChunk(chunk_id="chk_2", parent_node_id="n2", text="text 2", metadata={}, embeddings=[0.2]*384)
     ]
-    ingestion_mgr.chunking_engine.process_document = MagicMock(return_value=mock_chunks)
+    ingestion_mgr.chunking_engine.process_document = AsyncMock(return_value=mock_chunks)
     
     count = await ingestion_mgr.ingest_document("raw doc text", "file_abc", "source.md")
     
     assert count == 2
     assert mock_session.add.call_count == 2
     mock_session.commit.assert_called_once()
-    vector_engine.get_embeddings.assert_called_once_with(["text 1", "text 2"])
 
 async def test_rag_ingestion_manager_rollback_on_failure():
     """
@@ -180,17 +178,16 @@ async def test_rag_ingestion_manager_rollback_on_failure():
     db_mgr.SessionLocal = MagicMock(return_value=mock_session)
     
     vector_engine = MagicMock()
-    vector_engine.get_embeddings.return_value = np.array([[0.1]*384])
     
     ingestion_mgr = RAGIngestionManager(db_manager=db_mgr, vector_engine=vector_engine)
     
-    mock_chunks = [RenderedChunk(chunk_id="chk_1", parent_node_id="n1", text="text 1", metadata={})]
-    ingestion_mgr.chunking_engine.process_document = MagicMock(return_value=mock_chunks)
+    mock_chunks = [RenderedChunk(chunk_id="chk_1", parent_node_id="n1", text="text 1", metadata={}, embeddings=[0.1]*384)]
+    ingestion_mgr.chunking_engine.process_document = AsyncMock(return_value=mock_chunks)
     
     with pytest.raises(Exception) as exc_info:
         await ingestion_mgr.ingest_document("raw doc text", "file_abc", "source.md")
         
-    assert "DB error" in str(exc_info.value)
+    assert "DB error" in str(exc_info.value)    
     mock_session.rollback.assert_called_once()
 
 async def test_hierarchical_rag_retriever():
@@ -203,8 +200,8 @@ async def test_hierarchical_rag_retriever():
     """
     mock_session = AsyncMock()
     
-    vector_engine = MagicMock()
-    vector_engine.get_embeddings.return_value = np.array([[0.5]*384])
+    vector_engine = AsyncMock()
+    vector_engine.get_embeddings_async.return_value = np.array([[0.5]*384])
     
     retriever = HierarchicalRAGRetriever(db_session=mock_session, vector_engine=vector_engine)
     
@@ -229,7 +226,7 @@ async def test_hierarchical_rag_retriever():
     assert res["distance"] == 0.35
     assert res["similarity"] == pytest.approx(0.65)
     
-    vector_engine.get_embeddings.assert_called_once_with(["What is the answer?"])
+    vector_engine.get_embeddings_async.assert_called_once_with(["What is the answer?"])
     mock_session.execute.assert_called_once()
 
 # --- RIGOROUS EXTENDED TESTS ---
@@ -246,7 +243,7 @@ async def test_rag_ingestion_manager_empty_document():
     ingestion_mgr = RAGIngestionManager(db_manager=db_mgr, vector_engine=vector_engine)
     
     # Mock return value of parsing as empty
-    ingestion_mgr.chunking_engine.process_document = MagicMock(return_value=[])
+    ingestion_mgr.chunking_engine.process_document = AsyncMock(return_value=[])
     
     count = await ingestion_mgr.ingest_document("empty text", "file_123", "source.md")
     assert count == 0

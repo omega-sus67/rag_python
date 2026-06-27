@@ -26,7 +26,7 @@ class HierarchicalRAGRetriever:
         """
         # Step 1: Embed the incoming query.
         # This converts user text into a 1D vector (e.g. size 384).
-        query_vector_ndarray = self.vector_engine.get_embeddings([query_text])[0]
+        query_vector_ndarray = (await self.vector_engine.get_embeddings_async([query_text]))[0]
         
         # Convert the NumPy array representation into a standard float list for database execution.
         query_vector_list = query_vector_ndarray.tolist()
@@ -68,7 +68,7 @@ class HierarchicalRAGRetriever:
         Merges results and maps them with source documents.
         """
         # 1. Embed incoming query
-        query_vector_ndarray = self.vector_engine.get_embeddings([query_text])[0]
+        query_vector_ndarray = (await self.vector_engine.get_embeddings_async([query_text]))[0]
         query_vector_list = query_vector_ndarray.tolist()
 
         # 2. Query pgvector cosine distance across all files, joining with the files table to get titles

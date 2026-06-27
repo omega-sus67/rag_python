@@ -3,19 +3,24 @@
 import unittest
 from unittest.mock import MagicMock
 import numpy as np
-
+import pytest
 from app.engines.hierarchical_chunker import HierarchicalSemanticEngine, RenderedChunk
 from app.engines.semantic_chunker import SemanticEngine
+
+pytestmark = pytest.mark.asyncio
 
 class MockVectorEngine:
     """Mock helper representing vector model embedding interface."""
     def get_embeddings(self, texts):
         return np.ones((len(texts), 384))
-
+    
+    async def get_embeddings_async(self, texts):
+        return self.get_embeddings(texts)
+    
     def calculate_cosine_similarity(self, vec_a, vec_b):
         return 1.0
 
-def test_hierarchical_semantic_engine_processes_document():
+async def test_hierarchical_semantic_engine_processes_document():
     """
     PURPOSE: Verifies full document parsing, AST extraction, and hierarchical context path prepending.
     CAPABILITIES:
@@ -36,7 +41,7 @@ def test_hierarchical_semantic_engine_processes_document():
         "| Cell   |"
     )
     
-    chunks = engine.process_document(raw_markdown, source_name="test_doc.md")
+    chunks = await engine.process_document(raw_markdown, source_name="test_doc.md")
     
     assert len(chunks) == 2
     
@@ -59,7 +64,7 @@ def test_hierarchical_semantic_engine_processes_document():
 
 # --- RIGOROUS EXTENDED TESTS ---
 
-def test_hierarchical_semantic_engine_empty_ast():
+async def test_hierarchical_semantic_engine_empty_ast():
     """
     PURPOSE: Tests engine decomposition on empty inputs.
     CAPABILITIES:
@@ -69,10 +74,10 @@ def test_hierarchical_semantic_engine_empty_ast():
     mock_vector_engine = MockVectorEngine()
     engine = HierarchicalSemanticEngine(vector_engine=mock_vector_engine)
     
-    chunks = engine.process_document("", source_name="empty.md")
+    chunks = await engine.process_document("", source_name="empty.md")
     assert len(chunks) == 0
 
-def test_hierarchical_semantic_engine_long_list_token_split():
+async def test_hierarchical_semantic_engine_long_list_token_split():
     """
     PURPOSE: Verifies that long list blocks exceeding limit budgets are split safely by TokenSizeOptimizer.
     CAPABILITIES:
@@ -95,10 +100,42 @@ def test_hierarchical_semantic_engine_long_list_token_split():
         "- Bullet 5\n"
     )
     
-    chunks = engine.process_document(raw_markdown, source_name="long_list.md")
+    chunks = await engine.process_document(raw_markdown, source_name="long_list.md")
     # Due to small token limits, the list should be partitioned into multiple sub-chunks
     assert len(chunks) > 1
     for chunk in chunks:
         assert chunk.metadata["node_type"] == "LIST"
         assert chunk.metadata["structural_path"] == ["Parent Heading"]
         assert "Context: Parent Heading" in chunk.text
+
+async def test_hierarchical_semantic_engine_vector_math_strategy():
+    """
+    PURPOSE: Verifies that Option B (vector_math strategy) computes chunk embeddings via mean pooling.
+    """
+    from app.core.config import settings
+    
+    mock_vector_engine = MockVectorEngine()
+    engine = HierarchicalSemanticEngine(vector_engine=mock_vector_engine)
+    
+    # Configure strategy to vector_math
+    original_strategy = settings.chunk_embedding_strategy
+    settings.chunk_embedding_strategy = "vector_math"
+    
+    try:
+        raw_markdown = (
+            "# Main Topic\n"
+            "This is sentence one. This is sentence two.\n"
+        )
+        chunks = await engine.process_document(raw_markdown, source_name="test_doc.md")
+        
+        assert len(chunks) == 1
+        para_chunk = chunks[0]
+        # In MockVectorEngine, sentence embeddings are all ones.
+        # The mean-pooled normalized vector should also be valid.
+        assert para_chunk.embeddings is not None
+        assert len(para_chunk.embeddings) == 384
+        norm = np.linalg.norm(np.array(para_chunk.embeddings))
+        assert abs(norm - 1.0) < 1e-5
+    finally:
+        settings.chunk_embedding_strategy = original_strategy
+

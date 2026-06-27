@@ -1,0 +1,33 @@
+[
+  {
+    "query": "Why does Peter Pan refuse to grow up?",
+    "document_title": "Peter-Pan.pdf",
+    "expected_substrings": [
+      "remain a boy",
+      "eternal youth",
+      "responsibilities of grown-ups",
+      "wants always to be a little boy"
+    ],
+    "reference_answer": "Peter Pan refuses to grow up because he wants to remain a young boy forever to play and have fun, escaping the serious responsibilities, rules, and limits of adulthood."
+  },
+  {
+    "query": "Who is the captain of the Jolly Roger?",
+    "document_title": "Peter-Pan.pdf",
+    "expected_substrings": [
+      "Hook",
+      "Captain Hook",
+      "Jas Hook"
+    ],
+    "reference_answer": "The captain of the Jolly Roger is Captain Hook (James Hook), who is Peter Pan's primary nemesis."
+  },
+  {
+    "query": "Where do the lost boys live?",
+    "document_title": "Peter-Pan.pdf",
+    "expected_substrings": [
+      "Neverland",
+      "Never Land",
+      "underground home"
+    ],
+    "reference_answer": "The lost boys live in Neverland, specifically in an underground home accessed through hollow trees."
+  }
+]

@@ -7,4 +7,11 @@ postgres_tutorial.py
 trialData/
 dev_log.md
 rag_pipeline_review.md
+cli_instructions.md
+scalable_backend.md
+improvements.md
+qna.md
+resume.tex
+setup.cfg
+buf
 .gitignore

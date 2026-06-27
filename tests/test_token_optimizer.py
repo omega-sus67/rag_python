@@ -114,3 +114,16 @@ def test_optimizer_non_ascii_characters():
     rejoined = "".join(result)
     assert "你好" in rejoined
     assert "😊" in rejoined
+
+def test_optimizer_exact_overlap_boundary():
+    """
+    PURPOSE: Tests the exact boundary where overlap_tokens equals max_tokens.
+    CAPABILITIES:
+    - Prevents infinite loops when overlap equals max_tokens.
+    - Forces progress by stepping start_idx to end_idx.
+    """
+    optimizer = TokenSizeOptimizer(max_tokens=10, overlap_tokens=10)
+    text = "apple banana cherry grape orange melon strawberry peach lemon lime blueberry blackberry raspberry"
+    result = optimizer.optimize_block(text)
+    assert len(result) > 1
+

@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from sqlalchemy import Column, Integer, String, text, select, ForeignKey
+from sqlalchemy import Column, Integer, String, text, select, ForeignKey, Index
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from pgvector.sqlalchemy import Vector
@@ -57,6 +57,13 @@ class dbChunk(Base):
             text_data=rendered_chunk.text,
             embeddings=vector
         )
+Index(
+        "ix_doc_chunks_embeddings_hnsw",
+        dbChunk.embeddings,
+        postgresql_using="hnsw",
+        postgresql_with={"m": 16, "ef_construction": 200},
+        postgresql_ops={"embeddings": "vector_cosine_ops"}
+    )
 
 
 class DatabaseManager:
@@ -124,6 +131,19 @@ class DatabaseManager:
             await session.refresh(db_doc)
             return db_doc
 
+    async def delete_document(self, file_id: str) -> bool:
+        """
+        Deletes a document and all its associated semantic chunks.
+        Used to reset database state for clean-slate ingestion benchmarks.
+        """
+        async with self.SessionLocal() as session:
+            # 1. Delete matching rows in doc_chunks
+            await session.execute(text("DELETE FROM doc_chunks WHERE file_id = :file_id"), {"file_id": file_id})
+            # 2. Delete the parent document row in files
+            await session.execute(text("DELETE FROM files WHERE id = :file_id"), {"file_id": file_id})
+            await session.commit()
+            return True
+
     async def fetch_document(self, file_id: str) -> dbFile:
         """
         Fetches document metadata by its ID.
@@ -186,7 +206,7 @@ class DatabaseManager:
             resolved = result.scalar()
             return resolved
 
-    
+
 class RAGIngestionManager:
     """
     Coordinates markdown parsing, chunking, and bulk vector embedding generation,
@@ -205,29 +225,22 @@ class RAGIngestionManager:
     async def ingest_document(self, raw_text: str, file_id: str, source_name: str) -> int:
         """
         Ingests a document:
-        1. Breaks raw markdown into structured, context-enriched text blocks.
-        2. Bulk embeds all chunks to minimize inference latency.
-        3. Inserts chunks inside a transaction.
-        4. Rolls back database changes on failure.
+        1. Breaks raw markdown into structured, context-enriched text blocks and computes their embeddings.
+        2. Inserts chunks inside a transaction.
+        3. Rolls back database changes on failure.
         """
-        # Step 1: Run hierarchical parsing and semantic segmentation.
-        rendered_chunks = self.chunking_engine.process_document(raw_text, source_name=source_name)
+        # Step 1: Run hierarchical parsing, semantic segmentation, and embedding computation.
+        rendered_chunks = await self.chunking_engine.process_document(raw_text, source_name=source_name)
         
         # If no chunks were generated, exit early.
         if not rendered_chunks:
             return 0
 
-        # Step 2: Extract text strings for batch embedding.
-        final_texts_to_embed = [chunk.text for chunk in rendered_chunks]
-
-        # Step 3: Call inference to get vector coordinates.
-        ingestion_embeddings = self.vector_engine.get_embeddings(final_texts_to_embed)
-
-        # Step 4: Map DTO chunks to database records and insert them.
+        # Step 2: Map DTO chunks to database records and insert them.
         async with self.db_manager.SessionLocal() as session:
             for index, rendered_chunk in enumerate(rendered_chunks):
-                # Retrieve the corresponding vector coordinates and convert from NumPy array to Python list of floats.
-                vector_row = ingestion_embeddings[index].tolist()
+                # Retrieve pre-computed chunk vector coordinates
+                vector_row = rendered_chunk.embeddings
 
                 # Map metadata fields via factory.
                 db_record = dbChunk.from_rendered_chunk(
@@ -240,7 +253,7 @@ class RAGIngestionManager:
                 # Add record to transaction session queue.
                 session.add(db_record)
 
-            # Step 5: Flush and commit all inserts to PostgreSQL.
+            # Step 3: Flush and commit all inserts to PostgreSQL.
             try:
                 await session.commit()
                 return len(rendered_chunks)
@@ -248,3 +261,4 @@ class RAGIngestionManager:
                 # Rollback transaction to protect database state integrity on failures.
                 await session.rollback()
                 raise e
+

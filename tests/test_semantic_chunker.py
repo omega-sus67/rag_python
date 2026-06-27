@@ -162,17 +162,67 @@ def test_sliding_chunker_sufficient_sentences():
     - Sets boundary indicator when window distance exceeds dynamic thresholds.
     """
     mock_vector = MagicMock()
-    # For window_size=2 and 6 sentences, we have 3 split points, generating 6 strings
-    mock_vector.get_embeddings.return_value = np.ones((6, 384))
+    # 6 sentences total. Let's make S1, S2, S3 semantically similar (topic A),
+    # and S4, S5, S6 semantically similar (topic B).
+    # We return mock embeddings showing this transition.
+    embedding_dim = 384
+    mock_embeddings = np.zeros((6, embedding_dim))
+    mock_embeddings[0:3, 0] = 1.0  # Topic A: [1, 0, ...]
+    mock_embeddings[3:6, 1] = 1.0  # Topic B: [0, 1, ...]
     
-    # 3 pairwise comparisons are made
-    mock_vector.calculate_cosine_similarity.side_effect = [0.9, 0.1, 0.8]
+    mock_vector.get_embeddings.return_value = mock_embeddings
     
     chunker = SlidingSemanticChunker(vector_engine=mock_vector, window_size=2)
     sentences = ["S1", "S2", "S3", "S4", "S5", "S6"]
     
     analysis = chunker.compute_window_bounds(sentences)
     assert len(analysis) == 6
-    # Second valid index (index 2) should have a similarity drop and is_boundary set to True
+    # With window_size=2:
+    # Split index 2 (split after S3) compares left window (S2, S3) -> Topic A,
+    # with right window (S4, S5) -> Topic B. This is the boundary of topic shift!
     assert analysis[2]["is_boundary"] is True
+
+def test_semantic_engine_lazy_loading():
+    """
+    PURPOSE: Verifies that the embedding model is loaded lazily and only when required.
+    """
+    engine = SemanticEngine()
+    # The model should start as None before any calls or access
+    assert engine._model is None
+    
+    # Accessing the model property should trigger loading
+    _ = engine.model
+    assert engine._model is not None
+
+def test_semantic_engine_auto_unload():
+    """
+    PURPOSE: Verifies that the model is automatically unloaded after the configured delay.
+    """
+    import time
+    from app.core.config import settings
+    
+    # Override settings for the test
+    original_unload = settings.auto_unload_embeddings
+    original_delay = settings.auto_unload_delay
+    
+    settings.auto_unload_embeddings = True
+    settings.auto_unload_delay = 0.1  # 100 milliseconds
+    
+    try:
+        engine = SemanticEngine()
+        # Trigger lazy load
+        _ = engine.model
+        assert engine._model is not None
+        
+        # Wait for longer than 0.1 seconds to trigger timer
+        time.sleep(0.25)
+        
+        # Check that the model has been cleared
+        assert engine._model is None
+    finally:
+        # Restore settings
+        settings.auto_unload_embeddings = original_unload
+        settings.auto_unload_delay = original_delay
+
+
 

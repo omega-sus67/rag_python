@@ -9,6 +9,11 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.prompt import Prompt
+import time
+import hashlib
+from app.utils.pdf_extractor import parsePdf
+from app.db.database_manager import dbFile
+from sqlalchemy import text
 
 from app.controllers.main_controller import MainController
 from fastapi import HTTPException
@@ -188,7 +193,105 @@ async def start_agent_chat():
             break
         except Exception as e:
             console.print(f"[bold red]Error:[/] {str(e)}")
-    
+
+async def evaluate_ingestion(filepath: str, force: bool = False):
+    """
+    Benchmarks parsing, semantic chunking, embedding generation, and database inserts.
+    """
+    if not os.path.exists(filepath):
+        console.print(f"[bold red]Error:[/] File not found at '{filepath}'")
+        sys.exit(1)
+    console.print(Panel(
+        f"[bold cyan]RAG Pipeline Ingestion Speed Benchmark[/]\n[dim]Target: {filepath}[/]",
+        border_style="cyan"
+    ))
+    controller = MainController()
+    await controller.initialize_system()
+    # Step 1: Force delete if requested
+    if force:
+        with Progress(SpinnerColumn(), TextColumn("[yellow]{task.description}"), transient=True) as progress:
+            progress.add_task("Checking and removing existing document version...")
+            # We parse temporarily just to get the text hash and title for deletion
+            doc = parsePdf(filepath)
+            unique_id = hashlib.sha256(doc.extracted_text.encode('utf-8')).hexdigest()
+            # Check if exists
+            try:
+                await controller.db_manager.fetch_document(unique_id)
+                await controller.db_manager.delete_document(unique_id)
+                console.print("[yellow]Notice:[/] Deleted existing document for clean benchmark.")
+            except HTTPException:
+                pass  # Document doesn't exist, proceed
+    # Step 2: Benchmark PDF text extraction/parsing
+    start_parse = time.perf_counter()
+    with Progress(SpinnerColumn(), TextColumn("[yellow]{task.description}"), transient=True) as progress:
+        progress.add_task("Parsing PDF layout & extracting text...")
+        doc = parsePdf(filepath)
+    end_parse = time.perf_counter()
+    parse_duration = end_parse - start_parse
+    # Step 3: Save document metadata
+    try:
+        db_doc = await controller.db_manager.save_document(doc)
+    except HTTPException as e:
+        if "already exists" in e.detail:
+            console.print("[bold red]Error:[/] Document already exists in DB. Run with --force to overwrite and run the benchmark.")
+            return
+        raise e
+    # Step 4: Benchmark Chunking + Embedding Generation + DB Write
+    # We replicate the ingestion steps manually here to measure timings of chunking vs embedding vs DB write
+    start_chunk = time.perf_counter()
+    with Progress(SpinnerColumn(), TextColumn("[yellow]{task.description}"), transient=True) as progress:
+        progress.add_task("Running semantic chunking...")
+        rendered_chunks = controller.ingestion_manager.chunking_engine.process_document(
+            doc.extracted_text, source_name=doc.title
+        )
+    end_chunk = time.perf_counter()
+    chunk_duration = end_chunk - start_chunk
+    # Calculate embedding timings (which happens during ingestion_manager.ingest_document, 
+    # but here we isolate the DB commit timing)
+    chunk_count = len(rendered_chunks)
+    word_count = len(doc.extracted_text.split())
+    # Ingest chunks and measure DB write time vs Embedding generation
+    # Since embeddings are calculated on access in HierarchicalSemanticEngine.process_document,
+    # let's isolate the DB writing block
+    start_db = time.perf_counter()
+    with Progress(SpinnerColumn(), TextColumn("[yellow]{task.description}"), transient=True) as progress:
+        progress.add_task("Writing vector coordinates to PostgreSQL...")
+        async with controller.db_manager.SessionLocal() as session:
+            for index, rendered_chunk in enumerate(rendered_chunks):
+                db_record = controller.db_manager.dbChunk.from_rendered_chunk(
+                    rendered_chunk=rendered_chunk,
+                    file_id=db_doc.id,
+                    index=index,
+                    vector=rendered_chunk.embeddings
+                )
+                session.add(db_record)
+            await session.commit()
+    end_db = time.perf_counter()
+    db_duration = end_db - start_db
+    total_time = parse_duration + chunk_duration + db_duration
+    words_per_sec = word_count / total_time if total_time > 0 else 0
+    # Print Results Table
+    from rich.table import Table
+    table = Table(title="Ingestion Benchmark Results", border_style="cyan")
+    table.add_column("Stage", style="bold cyan")
+    table.add_column("Duration (seconds)", justify="right", style="green")
+    table.add_column("Percentage", justify="right", style="yellow")
+    table.add_row("PDF Text Parsing", f"{parse_duration:.4f}s", f"{(parse_duration / total_time * 100):.1f}%")
+    table.add_row("Semantic Chunking & Embedding", f"{chunk_duration:.4f}s", f"{(chunk_duration / total_time * 100):.1f}%")
+    table.add_row("Postgres DB Vector Write", f"{db_duration:.4f}s", f"{(db_duration / total_time * 100):.1f}%")
+    table.add_row("Total Ingestion Pipeline", f"{total_time:.4f}s", "100.0%")
+    console.print("\n")
+    console.print(table)
+    console.print("\n")
+    console.print(Panel(
+        f"[bold]Metrics Output:[/]\n"
+        f"- Total Words Processed: {word_count}\n"
+        f"- Total Chunks Created: {chunk_count}\n"
+        f"- Average Words per Chunk: {int(word_count / chunk_count) if chunk_count > 0 else 0}\n"
+        f"- Throughput Ingestion Speed: [bold green]{words_per_sec:.2f} words/sec[/]",
+        border_style="green"
+    ))
+
 def main():
     """Entrypoint parsing CLI arguments and routing calls to respective async handlers."""
     parser = argparse.ArgumentParser(description="RAG Pipeline CLI")

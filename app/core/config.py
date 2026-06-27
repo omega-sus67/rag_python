@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     min_words: int = Field(default=50)
     max_tokens: int = Field(default=400)
     overlap_tokens: int = Field(default=100)
+    chunk_embedding_strategy: str = Field(default="hybrid")
+    auto_unload_embeddings: bool = Field(default=True)
+    auto_unload_delay: float = Field(default=10.0)
+
+
 
     # LLM Config
     llm_provider: str = Field(default="gemini")

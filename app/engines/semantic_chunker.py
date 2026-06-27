@@ -1,17 +1,63 @@
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import List, Union, Dict, Any
+from typing import List, Union, Dict, Any, Optional
 import re
+import threading
+import gc
 from app.core.config import settings
+import asyncio
 
 class SemanticEngine:
     """
     Handles text-to-vector embedding generation and mathematical similarity calculations.
     Wraps the SentenceTransformer model for centralized encoding.
+    Supports lazy loading and inactivity auto-unloading to save RAM/VRAM.
     """
     def __init__(self):
-        # Load embedding model defined in the global application settings.
-        self.model = SentenceTransformer(settings.embedding_model)
+        self._model = None
+        self._lock = threading.Lock()
+        self._timer = None
+
+    @property
+    def model(self) -> SentenceTransformer:
+        """
+        Thread-safe lazy loader for the SentenceTransformer model.
+        Resets the inactivity timer upon access.
+        """
+        with self._lock:
+            if self._model is None:
+                self._model = SentenceTransformer(settings.embedding_model)
+            
+            if settings.auto_unload_embeddings:
+                self._reset_timer()
+                
+            return self._model
+
+    def _reset_timer(self):
+        """
+        Cancels any active inactivity timer and spawns a new one.
+        """
+        if self._timer is not None:
+            self._timer.cancel()
+        
+        self._timer = threading.Timer(settings.auto_unload_delay, self._unload_model)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _unload_model(self):
+        """
+        Thread-safe method to delete the model from memory and release VRAM/RAM cache.
+        """
+        with self._lock:
+            if self._model is not None:
+                self._model = None
+                gc.collect()
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except ImportError:
+                    pass
 
     def get_embeddings(self, texts: List[str]) -> np.ndarray:
         """
@@ -30,6 +76,15 @@ class SemanticEngine:
             normalize_embeddings=True
         )
         return embeddings
+
+    async def get_embeddings_async(self, texts: List[str]) -> np.ndarray:
+        """
+        ARCHITECT'S NOTE:
+        We use asyncio.to_thread to run the blocking get_embeddings function 
+        in a separate thread pool. This releases the main event loop to serve 
+        other users while the GPU/CPU churns on the vector math.
+        """
+        return await asyncio.to_thread(self.get_embeddings, texts)
 
     @staticmethod
     def calculate_cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
@@ -170,10 +225,9 @@ class SlidingSemanticChunker:
         splits = re.split(r'(?<!\bMr\.)(?<!\bMrs\.)(?<!\bDr\.)(?<!\bSt\.)(?<!\bJr\.)(?<!\bSr\.)(?<!\s[A-Z]\.)(?<!^[A-Z]\.)(?<=[.!?])\s+', text.strip())
         return [s.strip() for s in splits if s.strip()]
 
-    def compute_window_bounds(self, sentences : List[str]) -> List[Dict[str, Any]]:
+    def compute_window_bounds(self, sentences : List[str], sentence_embeddings: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
         """
-        Computes sliding window semantic differences.
-        Compares joined left and right windows of size window_size.
+        Computes sliding window semantic differences using NumPy mean pooling on pre-computed sentence embeddings.
         """
         num_sentences = len(sentences)
         # Guard clause: If text has fewer sentences than the window size on both sides,
@@ -181,28 +235,38 @@ class SlidingSemanticChunker:
         if num_sentences < (self.window_size * 2):
             return [{"index": i, "distance": 0.0, "is_boundary": False} for i in range(num_sentences)]
 
-        left_window_strings = []
-        right_window_strings = []
-        
+        # If sentence embeddings are not pre-computed, calculate them on the fly
+        if sentence_embeddings is None:
+            sentence_embeddings = self.vector_engine.get_embeddings(sentences)
+
         # Valid indexes where we can fit a full left and right window.
         valid_split_indices = list(range(self.window_size - 1, num_sentences - self.window_size))
         
-        # Build windows by joining sentences.
-        for idx in valid_split_indices:
-            left_win = sentences[idx - self.window_size + 1 : idx + 1]
-            right_win = sentences[idx + 1 : idx + 1 + self.window_size]
-            
-            left_window_strings.append(" ".join(left_win))
-            right_window_strings.append(" ".join(right_win))
+        # Build window embeddings by taking the mean of sentence embeddings in each window
+        left_win_embs = [
+            np.mean(sentence_embeddings[idx - self.window_size + 1 : idx + 1], axis=0)
+            for idx in valid_split_indices
+        ]
+        right_win_embs = [
+            np.mean(sentence_embeddings[idx + 1 : idx + 1 + self.window_size], axis=0)
+            for idx in valid_split_indices
+        ]
 
-        # Bulk embed window contents to minimize API/model invocation roundtrips.
-        left_embeddings = self.vector_engine.get_embeddings(left_window_strings)
-        right_embeddings = self.vector_engine.get_embeddings(right_window_strings)
+        left_embeddings = np.array(left_win_embs)
+        right_embeddings = np.array(right_win_embs)
 
-        window_distances = []
-        for i in range(len(valid_split_indices)):
-            sim = self.vector_engine.calculate_cosine_similarity(left_embeddings[i], right_embeddings[i])
-            window_distances.append(1.0 - sim)
+        # Normalize the window embeddings (crucial for cosine similarity)
+        left_norms = np.linalg.norm(left_embeddings, axis=1, keepdims=True)
+        left_norms[left_norms == 0.0] = 1.0
+        left_embeddings_normalized = left_embeddings / left_norms
+
+        right_norms = np.linalg.norm(right_embeddings, axis=1, keepdims=True)
+        right_norms[right_norms == 0.0] = 1.0
+        right_embeddings_normalized = right_embeddings / right_norms
+
+        # Compute cosine similarity using row-wise dot products
+        similarities = np.sum(left_embeddings_normalized * right_embeddings_normalized, axis=1)
+        window_distances = 1.0 - similarities
 
         # Dynamic statistical threshold.
         mean_dist = float(np.mean(window_distances))
