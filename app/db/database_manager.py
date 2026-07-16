@@ -237,6 +237,7 @@ class RAGIngestionManager:
             return 0
 
         # Step 2: Map DTO chunks to database records and insert them.
+        print(f"[Ingestion] Preparing {len(rendered_chunks)} chunks for database insertion...", flush=True)
         async with self.db_manager.SessionLocal() as session:
             for index, rendered_chunk in enumerate(rendered_chunks):
                 # Retrieve pre-computed chunk vector coordinates
@@ -255,10 +256,13 @@ class RAGIngestionManager:
 
             # Step 3: Flush and commit all inserts to PostgreSQL.
             try:
+                print(f"[Ingestion] Committing transaction for {len(rendered_chunks)} chunks to PostgreSQL...", flush=True)
                 await session.commit()
+                print(f"[Ingestion] Database transaction committed successfully for '{source_name}'.", flush=True)
                 return len(rendered_chunks)
             except Exception as e:
                 # Rollback transaction to protect database state integrity on failures.
+                print(f"[Ingestion] Database transaction failed. Rolling back...", flush=True)
                 await session.rollback()
                 raise e
 

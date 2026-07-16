@@ -1,3 +1,6 @@
+import os
+import time
+from datetime import datetime
 from fastapi import HTTPException
 from app.utils.pdf_extractor import parsePdf
 from app.db.database_manager import DatabaseManager, RAGIngestionManager
@@ -40,26 +43,54 @@ class MainController:
         2. Deduplicates document and saves metadata.
         3. Segments document and ingests vectors.
         """
-        # Step 1: Parse PDF to markdown representation.
+        start_time = time.perf_counter()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        filename = os.path.basename(file_path)
+        file_size_bytes = 0
         try:
-            doc = parsePdf(file_path)
-        except HTTPException as he:
-            # Re-raise explicit HTTP exceptions from utility.
-            raise he
-        except Exception as e:
-            # Wrap unexpected library errors into standard Internal Server Error.
-            raise HTTPException(status_code=500, detail=f"PDF Parsing Failed: {str(e)}")
+            if os.path.exists(file_path):
+                file_size_bytes = os.path.getsize(file_path)
+        except Exception:
+            pass
 
-        # Step 2: Save document metadata. Will throw 400 error on duplicate hashes.
-        db_doc = await self.db_manager.save_document(doc)
-        
-        # Step 3: Run segment and ingestion transaction.
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        log_file_path = os.path.join(project_root, "ingestion.log")
+
         try:
+            # Step 1: Parse PDF to markdown representation.
+            try:
+                print(f"[Ingestion] Phase 1: Parsing PDF file '{filename}' (size: {file_size_bytes / (1024 * 1024):.2f} MB) using PyMuPDF...", flush=True)
+                doc = parsePdf(file_path)
+            except HTTPException as he:
+                raise he
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"PDF Parsing Failed: {str(e)}")
+
+            # Step 2: Save document metadata. Will throw 400 error on duplicate hashes.
+            print(f"[Ingestion] Phase 2: PDF parsed successfully. Saving document metadata and checking for duplicates...", flush=True)
+            db_doc = await self.db_manager.save_document(doc)
+            
+            # Step 3: Run segment and ingestion transaction.
+            print(f"[Ingestion] Phase 3: Document metadata saved (ID: {db_doc.id}). Starting segmentation and embedding ingestion...", flush=True)
             chunk_count = await self.ingestion_manager.ingest_document(
                 raw_text=doc.extracted_text,
                 file_id=db_doc.id,
                 source_name=doc.title
             )
+
+            elapsed_time = time.perf_counter() - start_time
+            
+            # Log successful ingestion
+            log_line = (
+                f"[{timestamp}] SUCCESS | File: {filename} | "
+                f"Size: {file_size_bytes / (1024 * 1024):.2f} MB | "
+                f"Duration: {elapsed_time:.2f}s | "
+                f"Chunks: {chunk_count} | "
+                f"Doc ID: {db_doc.id}\n"
+            )
+            with open(log_file_path, "a") as f:
+                f.write(log_line)
+
             return {
                 "message": "Document successfully parsed and ingested.",
                 "document_id": db_doc.id,
@@ -67,7 +98,18 @@ class MainController:
                 "chunks_processed": chunk_count
             }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Ingestion Failed: {str(e)}")
+            elapsed_time = time.perf_counter() - start_time
+            # Log failed ingestion
+            log_line = (
+                f"[{timestamp}] FAILURE | File: {filename} | "
+                f"Size: {file_size_bytes / (1024 * 1024):.2f} MB | "
+                f"Duration: {elapsed_time:.2f}s | "
+                f"Error: {str(e)}\n"
+            )
+            with open(log_file_path, "a") as f:
+                f.write(log_line)
+            
+            raise e
 
     async def fetch_document(self, doc_id: str):
         """Fetches document metadata by its hash ID."""

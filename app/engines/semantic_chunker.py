@@ -72,7 +72,7 @@ class SemanticEngine:
             texts,
             convert_to_numpy=True,
             show_progress_bar=True,
-            batch_size=32,
+            batch_size=256,
             normalize_embeddings=True
         )
         return embeddings

@@ -65,25 +65,30 @@ class HierarchicalSemanticEngine:
         3. Traverses and decomposes the AST recursively into semantic chunks.
         4. Computes final chunk embeddings based on the configured strategy.
         """
+        print(f"[Ingestion] Parsing raw markdown for '{source_name}' to construct AST tree...", flush=True)
         root_node = self.structure_parser.parse(raw_markdown_text)
         
         # Step 1: Collect all sentences across the entire AST
         sentence_list: List[str] = []
         node_sentence_indices: Dict[str, range] = {}
         self._collect_sentences(root_node, sentence_list, node_sentence_indices)
+        print(f"[Ingestion] Extracted {len(sentence_list)} sentences from AST. Generating sentence-level embeddings...", flush=True)
         
         # Step 2: Batch-embed all sentences in one call
         sentence_embeddings = await self.boundary_detector.vector_engine.get_embeddings_async(sentence_list)
+        print(f"[Ingestion] Completed sentence embeddings. Decomposing AST tree into semantic chunks...", flush=True)
         
         # Step 3: Decompose the tree
         final_chunks: List[RenderedChunk] = []
         self._decompose_node(root_node, final_chunks, source_name, sentence_list, node_sentence_indices, sentence_embeddings)
+        print(f"[Ingestion] Decomposed AST into {len(final_chunks)} chunks. Generating final chunk embeddings (strategy: '{settings.chunk_embedding_strategy}')...", flush=True)
         
         # Step 4: Populate final chunk embeddings
         if final_chunks:
             if settings.chunk_embedding_strategy == "hybrid":
                 # Batch embed all final chunk texts
                 chunk_texts = [c.text for c in final_chunks]
+                print(f"[Ingestion] Hybrid strategy: generating embeddings for all {len(chunk_texts)} chunks...", flush=True)
                 chunk_vectors = await self.boundary_detector.vector_engine.get_embeddings_async(chunk_texts)
                 for idx, chunk in enumerate(final_chunks):
                     chunk.embeddings = chunk_vectors[idx].tolist()
@@ -99,10 +104,12 @@ class HierarchicalSemanticEngine:
                         texts_to_embed.append(chunk.text)
                 
                 if texts_to_embed:
+                    print(f"[Ingestion] Vector Math strategy: embedding remaining {len(texts_to_embed)} non-paragraph chunks (lists, tables)...", flush=True)
                     chunk_vectors = await self.boundary_detector.vector_engine.get_embeddings_async(texts_to_embed)
                     for i, idx in enumerate(chunks_to_embed_indices):
                         final_chunks[idx].embeddings = chunk_vectors[i].tolist()
-                        
+        
+        print(f"[Ingestion] Completed final chunk embedding generation.", flush=True)
         return final_chunks
 
     def _decompose_node(
