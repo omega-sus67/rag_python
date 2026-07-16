@@ -1,6 +1,9 @@
 # tests/test_pdf_extractor.py
 
-from app.utils.pdf_extractor import clean_extracted_text
+from unittest.mock import patch, MagicMock
+import pytest
+from fastapi import HTTPException
+from app.utils.pdf_extractor import clean_extracted_text, parsePdf
 
 def test_clean_extracted_text_removes_firefox_header():
     """
@@ -42,53 +45,58 @@ def test_clean_extracted_text_removes_gutenberg_url():
     expected = "Keep this line."
     assert clean_extracted_text(dirty_text) == expected
 
-from unittest.mock import patch
-import pytest
-from fastapi import HTTPException
-from app.utils.pdf_extractor import parsePdf
+def _mock_pdf_doc(page_count: int = 5) -> MagicMock:
+    """Builds a fake fitz document exposing len() for the page-count probe."""
+    doc = MagicMock()
+    doc.__len__.return_value = page_count
+    return doc
 
+@patch("app.utils.pdf_extractor.fitz.open")
 @patch("pymupdf4llm.to_markdown")
-def test_parse_pdf_success(mock_to_markdown):
+def test_parse_pdf_success(mock_to_markdown, mock_fitz_open):
     """
     PURPOSE: Verifies successful extraction, layout conversions, and title generation on valid paths.
     CAPABILITIES:
     - Conversions to markdown are called.
     - Path base name is title-cased.
     """
+    mock_fitz_open.return_value = _mock_pdf_doc()
     mock_to_markdown.return_value = "Firefox \nSome text inside the PDF."
     doc = parsePdf("/dummy/path/my_awesome_file.pdf")
-    
+
     assert doc.title == "My_Awesome_File"
     assert doc.extracted_text == "Some text inside the PDF."
     mock_to_markdown.assert_called_once_with("/dummy/path/my_awesome_file.pdf")
 
-@patch("pymupdf4llm.to_markdown")
-def test_parse_pdf_file_not_found(mock_to_markdown):
+@patch("app.utils.pdf_extractor.fitz.open")
+def test_parse_pdf_file_not_found(mock_fitz_open):
     """
     PURPOSE: Verifies that FileNotFound translates to a 404 HTTP Exception.
     CAPABILITIES:
     - Wraps system IOError to correct API status codes.
     """
-    mock_to_markdown.side_effect = FileNotFoundError()
-    
+    mock_fitz_open.side_effect = FileNotFoundError()
+
     with pytest.raises(HTTPException) as exc_info:
         parsePdf("/dummy/path/missing.pdf")
-        
+
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "file not found"
 
+@patch("app.utils.pdf_extractor.fitz.open")
 @patch("pymupdf4llm.to_markdown")
-def test_parse_pdf_generic_exception(mock_to_markdown):
+def test_parse_pdf_generic_exception(mock_to_markdown, mock_fitz_open):
     """
     PURPOSE: Verifies general error trapping inside parser function.
     CAPABILITIES:
     - Converts unexpected exceptions into 500 error responses with trace details.
     """
+    mock_fitz_open.return_value = _mock_pdf_doc()
     mock_to_markdown.side_effect = Exception("Permission denied")
-    
+
     with pytest.raises(HTTPException) as exc_info:
         parsePdf("/dummy/path/error.pdf")
-        
+
     assert exc_info.value.status_code == 500
     assert "Failed to parse PDF: Permission denied" in exc_info.value.detail
 
@@ -105,14 +113,16 @@ def test_clean_extracted_text_empty_and_spaces():
     # Firefox, page count, and date are matched and ignored; the blank line is kept.
     assert clean_extracted_text(noise_only) == ""
 
+@patch("app.utils.pdf_extractor.fitz.open")
 @patch("pymupdf4llm.to_markdown")
-def test_parse_pdf_title_derivation_edge_cases(mock_to_markdown):
+def test_parse_pdf_title_derivation_edge_cases(mock_to_markdown, mock_fitz_open):
     """
     PURPOSE: Tests file title extraction from complex file paths.
     CAPABILITIES:
     - Extracts correct title when path base contains multiple dots, hyphens, and case differences.
     - Converts filename elements to Title Case format.
     """
+    mock_fitz_open.return_value = _mock_pdf_doc()
     mock_to_markdown.return_value = "Content"
     doc = parsePdf("/complex-path/another.directory/my.awesome-document-v2.0.pdf")
     
