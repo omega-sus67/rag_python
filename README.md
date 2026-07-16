@@ -1,236 +1,155 @@
-# Agentic RAG Pipeline: Personal Knowledge Operating System (PKOS)
+# Agentic RAG Pipeline
 
-A high-performance, production-grade Retrieval-Augmented Generation (RAG) pipeline featuring hierarchical document parsing, sliding-window semantic chunking, and an autonomous **Reason-and-Act (ReAct)** agent. Built on an asynchronous architecture with Python, PostgreSQL (`pgvector`), and Hugging Face `SentenceTransformers`, this system is optimized for processing complex literary texts, technical guides, and structured documents with high positional and contextual retention.
+[![CI](https://github.com/omega-sus67/rag_python/actions/workflows/ci.yml/badge.svg)](https://github.com/omega-sus67/rag_python/actions/workflows/ci.yml)
 
----
+A Retrieval-Augmented Generation pipeline built from scratch in Python — no LangChain — with hierarchical document parsing, sliding-window semantic chunking, a **ReAct agent** with real tools, and a **measured evaluation** of whether the custom chunking actually beats a naive baseline (spoiler: it's complicated, see [Evaluation](#-evaluation)).
 
-## 🚀 Resume-Ready Technical Highlights
-
-If you are showcasing this project on your resume, here are the key engineering highlights:
-- **Autonomous Agentic Decision Loop:** Developed a **ReAct (Reason-and-Act) agent** from scratch using system-prompt instructions. Implemented iterative reasoning loops, self-correction, and tool calls to resolve complex user queries.
-- **Hierarchical Document Parsing (AST Engine):** Designed a custom line-by-line Markdown Abstract Syntax Tree (AST) parser that extracts sections, headers, tables, and lists. Implemented breadcrumb context propagation (`H1 > H2 > H3`) to prepend structural metadata directly to chunks, resolving lost-in-the-middle vector retrieval issues.
-- **Sliding-Window Semantic Segmentation:** Built a dynamic boundary detector comparing contextual left and right sentence embedding windows. Detects topic shifts using a dynamic standard deviation threshold rather than fixed character limits, ensuring high semantic coherence.
-- **Token Budget Optimization:** Integrated OpenAI’s `tiktoken` (`cl100k_base` tokenizer) to execute exact token-based segmenting and sliding overlaps. Prevents LLM context-window overflow and embedding truncation issues.
-- **Asynchronous Vector Database with pgvector:** Configured a concurrent database access layer using **SQLAlchemy 2.0 (AsyncSession)** and **asyncpg**. Engineered SHA-256 content hashing for document deduplication and implemented native database-level cosine similarity queries using `pgvector`.
-- **Comprehensive Quality Hardening:** Created a test suite containing **51 unit and integration tests** verifying sentence splitter edge-cases, AST tree backtracking, token budget boundary conditions, and database rollbacks.
+Ingestion is fully asynchronous: FastAPI accepts multipart uploads, queues work through Celery + Redis, and workers parse, chunk, embed, and store into PostgreSQL/`pgvector` (HNSW-indexed) behind a pgbouncer connection pool.
 
 ---
 
 ## 📐 System Architecture & Dataflow
 
-The diagram below illustrates the end-to-end processing pipeline, from document ingestion to agentic search and final answer generation.
-
 ```mermaid
 graph TD
-    %% Ingestion Pipeline
-    subgraph Ingestion_Pipeline ["1. Ingestion & Chunking Pipeline"]
-        A[Raw PDF Document] -->|PyMuPDF4LLM| B[Raw Markdown Text]
-        B -->|Sanitization Pipeline| C[Sanitized Markdown]
-        C -->|AST Parser| D[Document AST Tree]
-        D -->|Hierarchical Decomposer| E[Decomposed Nodes]
-        E -->|Sliding-Window Chunker| F[Semantic Clusters]
-        F -->|Token Size Optimizer| G[Context-Enriched Chunks]
-        G -->|SentenceTransformers| H[Dense Vector Embeddings]
-        H -->|Bulk Transaction| I[(PostgreSQL + pgvector)]
+    %% Async Ingestion
+    subgraph Async_Ingestion ["1. Asynchronous Ingestion"]
+        U[Client] -->|multipart PDF upload| API[FastAPI /upload]
+        API -->|202 + task_id| U
+        API -->|enqueue path| R[(Redis Broker)]
+        R --> W[Celery Worker]
+        W -->|PyMuPDF4LLM + thread pool| B[Raw Markdown]
+        B -->|Sanitization| C[Clean Markdown]
+        C -->|AST Parser| D[Document Tree]
+        D -->|Sliding-Window Chunker| E[Semantic Chunks]
+        E -->|Merge undersized fragments| F[Final Chunks]
+        F -->|SentenceTransformers| G[768-dim Embeddings]
+        G -->|pgbouncer pool| I[(PostgreSQL + pgvector, HNSW)]
     end
 
     %% Agentic Query Loop
-    subgraph Agentic_Query_Loop ["2. Interactive ReAct Agent Loop"]
-        J[User Query] -->|CLI Interface| K[ReAct Agent Engine]
-        K -->|1. Thought| L{Action / Final Answer?}
-        L -->|Action| M[Execute Registered Tool]
-        M -->|list_documents| I
-        M -->|search_document| I
-        M -->|search_all_documents| I
-        M -->|read_chunk| I
-        I -->|Observation| N[Context Return]
-        N -->|Feed Context| K
-        L -->|Final Answer| O[Format & Render to CLI]
+    subgraph Agentic_Query_Loop ["2. ReAct Agent Loop"]
+        J[User Query] --> K[ReAct Agent]
+        K -->|Thought| L{Action / Final Answer?}
+        L -->|Action| M[Registered Tool]
+        M -->|list_documents / search / read_chunk| I
+        I -->|Observation| K
+        L -->|Final Answer| O[Cited Answer]
     end
-
-    style Ingestion_Pipeline fill:#f5f7fa,stroke:#333,stroke-width:1px
-    style Agentic_Query_Loop fill:#eef2f7,stroke:#333,stroke-width:1px
 ```
 
 ---
 
-## 🛠️ Detailed Component Deep Dive
+## 📊 Evaluation
 
-### 1. Document Parsing & Text Sanitization Pipeline
-- **Extraction:** Leverages `pymupdf4llm` to convert unstructured PDF documents into structural Markdown layout, preserving headers, tabular boundaries, and list hierarchies.
-- **Sanitization:** Implements a multi-stage regex pipeline (`clean_extracted_text`) that filters out:
-  - Recurring PDF page headers and Gutenberg license headers.
-  - Page numbering artifacts (`X of Y` indicators).
-  - Browser/system metadata (e.g., date stamps and PDF viewer footprints).
-  - Project-specific URLs polluting the embedding space.
+Nothing above matters if the custom chunker doesn't retrieve better chunks, so the repo ships an evaluation harness (`app/eval/retrieval_eval.py`) that ingests the same corpus under two strategies — the hierarchical semantic pipeline vs. **fixed 400-token windows with 100-token overlap**, same embedding model, same pgvector search — and scores 18 hand-verified questions across 4 documents (two novels, a short story, and the heading-heavy ISO 27001 standard).
+
+A retrieved chunk only counts as a hit if it comes from the **document the question targets** *and* contains a verified answer substring.
+
+| Strategy | hit-rate@1 | hit-rate@3 | hit-rate@5 | MRR |
+|---|---|---|---|---|
+| semantic (this repo) | 22.2% | 38.9% | 50.0% | 0.312 |
+| fixed-size baseline | 22.2% | 44.4% | 50.0% | 0.347 |
+
+**What the numbers actually say:**
+
+- **The eval caught a real bug.** The first run scored semantic chunking *well below* baseline (38.9% vs 50.0% @5). Inspecting the misses showed 688 near-empty chunks (some 1 character long) flooding the index: one-sentence dialogue paragraphs were bypassing the minimum-size guard, and short chunks embed deceptively close to short queries. Merging undersized prose fragments into their predecessor lifted semantic hit-rate@5 from 38.9% → 50.0%. That fix exists because the eval exists.
+- **Aggregate parity, different strengths.** Semantic chunking wins on Gift of the Magi (4/4 vs 4/4, MRR 0.63 vs 0.56) and Peter Pan (3/7 vs 1/7); the baseline edges out ISO 27001 (3/4 vs 2/4). Both strategies struggle on a 670k-character anthology (White Nights), where the honest conclusion is that chunking strategy matters less than corpus-scale retrieval quality.
+- **Known limitation:** on fiction, PDF-to-markdown misdetects prose lines as headings, so the AST "breadcrumb" context paths that help on structured documents inject noise on novels.
+
+Reproduce with:
+```bash
+python cli.py evaluate-retrieval            # ingest corpus both ways + score
+python cli.py evaluate-retrieval --markdown # also print a paste-ready table
+python cli.py evaluate-retrieval --cleanup  # remove eval documents from the DB
+```
+
+---
+
+## 🚀 Quickstart (Docker)
+
+```bash
+cp .env.example .env          # fill in DB password + LLM key
+docker compose up --build     # db, pgbouncer, redis, api, worker
+# GPU machine? use: docker compose --profile gpu up --build
+
+# Upload a PDF (returns 202 + a task id)
+curl -F "file=@trialData/Peter-Pan.pdf" http://localhost:8000/upload
+
+# Poll ingestion status
+curl http://localhost:8000/task/status/<task_id>
+
+# Ask the agent
+curl -X POST http://localhost:8000/agent/query \
+     -H "Content-Type: application/json" \
+     -d '{"query": "Who is Captain Hook and what happened to his hand?"}'
+```
+
+For local development without Docker, create a venv, `pip install -r requirements-dev.txt`, start `db`/`pgbouncer`/`redis` via compose, and use the CLI below.
+
+---
+
+## 🛠️ Component Deep Dive
+
+### 1. Document Parsing & Sanitization (`app/utils/pdf_extractor.py`)
+- `pymupdf4llm` converts PDFs to structural Markdown, preserving headers, tables, and lists.
+- Documents over 20 pages are split into 50-page ranges converted **concurrently in a thread pool** (MuPDF releases the GIL during layout analysis).
+- A regex pipeline strips page headers, `X of Y` page numbers, timestamps, and Gutenberg URLs before anything is embedded.
 
 ### 2. Hierarchical Document AST Parser (`app/engines/markdown_parser.py`)
-- Standard flat chunking splits tables and lists in half, rendering them unreadable. The custom AST engine parses markdown lines into a tree structure composed of `DocNode` elements:
-  - **Node Types:** `ROOT`, `HEADING`, `PARAGRAPH`, `TABLE`, `LIST`.
-  - **Breadcrumb Context Path:** As the parser traverses down the tree, child nodes inherit their location. For example, a paragraph under Section 2.1 inherits the path `Context: Chapter 2 > Section 2.1`.
-  - **Structural Preservation:** Tables are kept fully intact as atomic units; list items are aggregated into coherent list blocks rather than fractured across sentence splits.
+- Parses markdown into a tree of `DocNode` elements (`ROOT`, `HEADING`, `PARAGRAPH`, `TABLE`, `LIST`).
+- **Breadcrumb context paths:** a paragraph under Section 2.1 carries `Context: Chapter 2 > Section 2.1`, prepended to its chunk so retrieval and the agent know where text came from, not just what it says.
+- Tables stay atomic; list items aggregate into coherent blocks instead of being fractured mid-sentence.
 
 ### 3. Sliding-Window Semantic Boundary Detector (`app/engines/semantic_chunker.py`)
-- Employs a context window comparison approach (comparing sliding windows of size $W$ on the left and right of every sentence split).
-- Generates dense vector representations of the windows using `BAAI/bge-base-en-v1.5` (768 dimensions).
-- Computes cosine distance ($1.0 - \text{CosineSimilarity}$) between the windows.
-- Marks semantic boundaries dynamically at index points where:
-  $$\text{Distance} > \mu_{\text{distances}} + (\text{threshold\_factor} \times \sigma_{\text{distances}})$$
-- Applies minimum size constraints (`min_sentences` and `min_words`) to prevent creating fragment chunks from short paragraphs.
+- Compares mean-pooled embedding windows of size $W$ to the left and right of each candidate split (`BAAI/bge-base-en-v1.5`, 768-dim).
+- Splits where cosine distance exceeds a **per-document dynamic threshold**: $\mu + (\text{threshold\_factor} \times \sigma)$ — no hardcoded magic number.
+- A post-pass merges undersized prose fragments into their predecessor (tables/lists exempt), added after the evaluation exposed fragment pollution.
+- The embedding model lazy-loads behind a thread-safe lock and auto-unloads after inactivity to release VRAM; every encode call runs via `asyncio.to_thread` so the event loop never blocks.
 
 ### 4. Token Budget Optimization (`app/utils/token_optimizer.py`)
-- Integrates `tiktoken` (`cl100k_base` encoding) to calculate exact token sizes.
-- Slices text blocks exceeding the `max_tokens` limit into multiple overlapping segments.
-- Slides the window using a configurable `overlap_tokens` buffer to preserve continuity across boundaries.
-- Employs defensive loops to prevent infinite splitting cycles on malformed text blocks.
+- `tiktoken` (`cl100k_base`) enforces exact token limits, slicing oversized blocks into overlapping segments (`max_tokens`/`overlap_tokens` configurable). Also serves as the fixed-size baseline chunker in the evaluation.
 
-### 5. Asynchronous Vector Database (`app/db/database_manager.py` & `retrieval_manager.py`)
-- **Connection Management:** Uses SQLAlchemy's async engine to support concurrent API connections via `asyncpg`.
-- **Vector Operations:** Connects directly with PostgreSQL’s `pgvector` extension.
-- **Idempotency:** Generates a SHA-256 hash of the document's text body to prevent duplicate ingestion of identical files.
-- **ACID Transactions:** Integrates error-handling rollbacks; all chunks are uploaded and committed in a single transactional block.
-- **Scoped Similarity Search:** Executes cosine distance operations inside the database (`cosine_distance` operator) to fetch the top-$K$ results, supporting:
-  - Scoped document queries (restricted to a single document).
-  - Cross-document queries (joining `doc_chunks` and `files` to locate matching resources globally).
+### 5. Asynchronous Vector Store (`app/db/`)
+- SQLAlchemy 2.0 async engine over `asyncpg`, routed through **pgbouncer in transaction mode**; admin operations use a direct port.
+- **HNSW index** (`m=16, ef_construction=200`, cosine ops) on the embedding column keeps search sub-linear as the corpus grows.
+- Documents keyed by the SHA-256 of their extracted text — duplicate uploads are rejected at the database level.
+- All chunk inserts commit in a single transaction with rollback on failure.
 
-### 6. Agentic Decision Engine (`app/engines/agent_engine.py`)
-- Implements a Reason-and-Act (ReAct) loop enabling multi-step queries:
-  1. **Thought:** The agent reasons about the user's query and selects an action.
-  2. **Action:** The agent executes one of the registered tools with a JSON payload.
-  3. **Observation:** The system executes the tool and returns the raw results.
-  4. **Loop:** Repeat steps 1–3 (up to `agent_max_iterations`) until sufficient information is collected.
-  5. **Final Answer:** Generates a comprehensive answer citing document titles and chunk IDs.
-- **Registered Tools:**
-  - `list_documents()`: Lists all document titles and hash IDs in the database.
-  - `search_document(query, file_id)`: Searches within a specific document. Automatically resolves the document name or hash ID.
-  - `search_all_documents(query)`: Executes a global semantic search across the entire database.
-  - `read_chunk(chunk_id)`: Fetches the raw text of a specific chunk. Allows the agent to inspect the source material in detail.
+### 6. ReAct Agent (`app/engines/agent_engine.py`)
+- Thought → Action → Observation loop (bounded by `agent_max_iterations`) over four registered tools: `list_documents`, `search_all_documents`, `search_document` (accepts title *or* hash id), and `read_chunk`.
+- Instead of one blind similarity lookup, the agent can survey the corpus, search, notice weak results, and reformulate its own query.
+- Provider-agnostic LLM layer (`app/core/llm.py`): Gemini, local Ollama, or any OpenAI-compatible endpoint behind one interface.
 
 ---
 
-## 💻 Tech Stack & Libraries
+## 🕹️ CLI
 
-- **Language:** Python 3.12
-- **Vector Database:** PostgreSQL + `pgvector`
-- **ORM / Driver:** SQLAlchemy 2.0 (Async) + `asyncpg`
-- **Embeddings:** Hugging Face `SentenceTransformers` (`BAAI/bge-base-en-v1.5`, 768-dim)
-- **Tokenization:** `tiktoken` (OpenAI cl100k_base)
-- **PDF Extraction:** `pymupdf4llm`
-- **CLI Interface:** `rich` (console tables, spinners, panels)
-- **Testing:** `pytest` + `pytest-asyncio`
-- **API Client:** `httpx` (async HTTP calls to LLM providers)
-- **LLM Integrations:** Google Gemini API, local Ollama, and OpenAI-compatible APIs
-
----
-
-## ⚙️ Installation & Local Setup
-
-### 1. Prerequisites
-- Python 3.12+
-- PostgreSQL server (with `pgvector` installed)
-  - *Note: On Ubuntu, you can install the extension with `sudo apt install postgresql-16-pgvector` or build it from source.*
-
-### 2. Clone and Setup Environment
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd rag_python
-
-# Initialize virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### 3. Database & LLM Environment Variables (`.env`)
-Create a `.env` file in the root directory:
-```env
-# Database Credentials
-DB_USER=postgres
-DB_PASSWORD=password
-DB_HOST=localhost
-DB_PORT=5433
-DB_NAME=tutorial_db
-
-# Embedding settings
-EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
-EMBEDDING_DIMENSION=768
-
-# LLM API Provider (gemini / ollama / openai)
-LLM_PROVIDER=gemini
-LLM_API_KEY=your_gemini_api_key
-LLM_MODEL=gemini-1.5-flash
-LLM_TEMPERATURE=0.0
-AGENT_MAX_ITERATIONS=5
+python cli.py ingest trialData/Peter-Pan.pdf                  # parse + chunk + embed + store
+python cli.py query <document_id> "your question" --top 3     # scoped similarity search
+python cli.py agent                                           # interactive ReAct chat
+python cli.py evaluate-retrieval --markdown                   # retrieval-quality benchmark
 ```
 
 ---
 
-## 🕹️ CLI Usage Guide
+## 🧪 Tests & CI
 
-The pipeline is managed via the console utility `cli.py` with three subcommands: `ingest`, `query`, and `agent`.
+**58 unit and integration tests** run on every push via GitHub Actions (ruff lint + pytest, CPU-only torch):
 
-### 1. Ingest a Document
-Parses, sanitizes, segments, and uploads a PDF file into the database. Outputs a unique Document ID:
 ```bash
-python3 cli.py ingest trialData/Peter-Pan.pdf
+pytest tests/ -q --ignore=tests/upload_all.py
 ```
 
-### 2. Standard Semantic Query
-Retrieves the top-$K$ most similar text chunks for a specific document. The similarity score is mapped and colorized (green for strong matches, red for weak matches):
-```bash
-python3 cli.py query <document_id> "Why does Peter Pan refuse to grow up?" --top 3
-```
-
-### 3. Interactive Agent Session
-Launches an interactive chat shell with the ReAct Agent. You can query across all documents simultaneously:
-```bash
-python3 cli.py agent
-```
-
-#### Example Agent Session log:
-```
-You: Who is Captain Hook and what happened to his hand?
-Thinking...
-
-Step 1 - Thought:
-I need to find out who Captain Hook is and what happened to his hand. I will start by searching all documents for "Captain Hook hand".
-
-Action: search_all_documents
-Inputs: {"query": "Captain Hook hand"}
-Observation: [
-  {
-    "chunk_id": "chk_38f29d",
-    "document_title": "Peter-Pan",
-    "text": "Context: Chapter 5 > The Crocodile\nContent: Hook is the captain of the Jolly Roger. He has a hook instead of a right hand. A crocodile bit off his hand and swallowed it...",
-    "similarity_score": "87.42%"
-  }
-]
-
-Step 2 - Thought:
-I have found that Captain Hook is the captain of the Jolly Roger and he has a hook instead of his right hand because a crocodile bit it off. I have all the necessary information.
-
-Final Answer:
-Captain Hook is the pirate captain of the ship *Jolly Roger* (from the document "Peter-Pan"). His right hand was bitten off and swallowed by a crocodile (Chunk ID: chk_38f29d), which is why he now has a hook in its place.
-```
+Coverage spans regex sanitization, AST construction and backtracking, boundary detection edge cases (zero variance, empty input), token slicing and overlap logic, undersized-chunk merging, and transaction rollback integrity.
 
 ---
 
-## 🧪 Comprehensive Test Suite
+## 💻 Tech Stack
 
-The system maintains a test suite comprising **51 unit and integration tests** verifying critical pipeline behaviors.
+Python 3.12 · FastAPI · Celery + Redis · PostgreSQL + pgvector (HNSW) · pgbouncer · SQLAlchemy 2.0 async + asyncpg · SentenceTransformers (`BAAI/bge-base-en-v1.5`) · tiktoken · pymupdf4llm · rich · pytest · Docker Compose
 
-### Run Tests
-```bash
-PYTHONPATH=. .venv/bin/pytest
-```
+## 📄 License
 
-### Coverage Areas
-- **`test_pdf_extractor.py`:** Validates regex sanitization layers and mock PDF processing.
-- **`test_markdown_parser.py`:** Checks line-by-line block creation, nested list structures, table boundaries, and parent-child AST links.
-- **`test_semantic_chunker.py`:** Asserts sentence splits, dynamic threshold outliers, and zero-variance/empty-input safety guards.
-- **`test_hierarchical_chunker.py`:** Verifies chunk structure generation and breadcrumb prepending.
-- **`test_token_optimizer.py`:** Evaluates token slicing logic, window overlaps, and infinite loop protection.
-- **`test_db_components.py`:** Tests database connections, duplicate document checks, and transaction rollback integrity.
+MIT
