@@ -3,6 +3,8 @@ from pydantic import BaseModel
 import pymupdf4llm
 import re
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+import fitz
 
 @dataclass
 class Document:
@@ -49,11 +51,35 @@ def clean_extracted_text(text: str) -> str:
 def parsePdf(path : str) -> Document :
     """
     Converts a PDF file to structural markdown layout using PyMuPDF4LLM.
-    Wraps execution in a try-except block to translate system exceptions into proper HTTP responses.
+    Uses multi-threaded parallel page extraction to bypass single-core bottlenecks
+    for large documents (PyMuPDF / MuPDF releases GIL during layout analysis).
     """
     try:
-        # Extract markdown structure directly from the file.
-        extText = pymupdf4llm.to_markdown(path)
+        # Open PDF to get total pages
+        doc = fitz.open(path)
+        total_pages = len(doc)
+        doc.close()
+        
+        # Determine number of concurrent workers (up to 8 threads)
+        max_workers = min(8, total_pages)
+        
+        if total_pages <= 20 or max_workers <= 1:
+            extText = pymupdf4llm.to_markdown(path)
+        else:
+            # Split pages into chunks of 50 pages each
+            chunk_size = 50
+            chunks = []
+            for i in range(0, total_pages, chunk_size):
+                end = min(i + chunk_size, total_pages)
+                chunks.append(list(range(i, end)))
+            
+            # Execute markdown conversion concurrently
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(pymupdf4llm.to_markdown, path, pages=chunk) for chunk in chunks]
+                results = [f.result() for f in futures]
+            
+            extText = "\n\n".join(results)
+            
         # Apply cleaning to purge headers, page numbers, and links.
         extText = clean_extracted_text(extText)
     except FileNotFoundError:
