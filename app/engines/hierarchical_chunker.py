@@ -76,11 +76,17 @@ class HierarchicalSemanticEngine:
         
         # Step 2: Batch-embed all sentences in one call
         sentence_embeddings = await self.boundary_detector.vector_engine.get_embeddings_async(sentence_list)
-        print(f"[Ingestion] Completed sentence embeddings. Decomposing AST tree into semantic chunks...", flush=True)
+        print("[Ingestion] Completed sentence embeddings. Decomposing AST tree into semantic chunks...", flush=True)
         
         # Step 3: Decompose the tree
         final_chunks: List[RenderedChunk] = []
         self._decompose_node(root_node, final_chunks, source_name, sentence_list, node_sentence_indices, sentence_embeddings)
+
+        # Step 3.5: Merge undersized fragments into their predecessor.
+        # Prose documents produce thousands of one-sentence paragraph nodes
+        # (dialogue lines, headings the parser missed); left alone they become
+        # near-empty chunks that dominate vector search results.
+        final_chunks = self._merge_undersized_chunks(final_chunks)
         print(f"[Ingestion] Decomposed AST into {len(final_chunks)} chunks. Generating final chunk embeddings (strategy: '{settings.chunk_embedding_strategy}')...", flush=True)
         
         # Step 4: Populate final chunk embeddings
@@ -109,8 +115,44 @@ class HierarchicalSemanticEngine:
                     for i, idx in enumerate(chunks_to_embed_indices):
                         final_chunks[idx].embeddings = chunk_vectors[i].tolist()
         
-        print(f"[Ingestion] Completed final chunk embedding generation.", flush=True)
+        print("[Ingestion] Completed final chunk embedding generation.", flush=True)
         return final_chunks
+
+    @staticmethod
+    def _content_of(chunk_text: str) -> str:
+        """Strips the 'Context: ...' breadcrumb prefix, returning only the content body."""
+        if chunk_text.startswith("Context: ") and "\nContent:" in chunk_text:
+            return chunk_text.split("\nContent:", 1)[1].strip()
+        return chunk_text
+
+    @staticmethod
+    def _is_prose(chunk: RenderedChunk) -> bool:
+        return chunk.metadata.get("node_type") in (NodeType.PARAGRAPH, NodeType.LIST_ITEM)
+
+    def _merge_undersized_chunks(self, chunks: List[RenderedChunk], min_words: int = settings.min_words) -> List[RenderedChunk]:
+        """
+        Folds prose chunks whose content falls below min_words into the
+        preceding prose chunk. Tables and grouped lists are never merged -
+        they are structurally distinct and legitimately small. The merged
+        chunk's embeddings are reset so the final embedding pass re-encodes
+        the combined text.
+        """
+        merged: List[RenderedChunk] = []
+        for chunk in chunks:
+            content = self._content_of(chunk.text)
+            if (
+                merged
+                and self._is_prose(chunk)
+                and self._is_prose(merged[-1])
+                and len(content.split()) < min_words
+            ):
+                prev = merged[-1]
+                prev.text = f"{prev.text} {content}"
+                prev.embeddings = None
+                prev.metadata["token_count"] = self.token_optimizer.count_tokens(prev.text)
+            else:
+                merged.append(chunk)
+        return merged
 
     def _decompose_node(
            self, 

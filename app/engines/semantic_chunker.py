@@ -1,6 +1,6 @@
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import List, Union, Dict, Any, Optional
+from typing import List, Dict, Any, Optional
 import re
 import threading
 import gc
@@ -72,7 +72,7 @@ class SemanticEngine:
             texts,
             convert_to_numpy=True,
             show_progress_bar=True,
-            batch_size=256,
+            batch_size=settings.embedding_batch_size,
             normalize_embeddings=True
         )
         return embeddings

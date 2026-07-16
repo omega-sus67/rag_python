@@ -1,11 +1,8 @@
 # tests/test_hierarchical_chunker.py
 
-import unittest
-from unittest.mock import MagicMock
 import numpy as np
 import pytest
-from app.engines.hierarchical_chunker import HierarchicalSemanticEngine, RenderedChunk
-from app.engines.semantic_chunker import SemanticEngine
+from app.engines.hierarchical_chunker import HierarchicalSemanticEngine
 
 pytestmark = pytest.mark.asyncio
 
@@ -139,3 +136,54 @@ async def test_hierarchical_semantic_engine_vector_math_strategy():
     finally:
         settings.chunk_embedding_strategy = original_strategy
 
+
+async def test_merge_undersized_chunks_folds_fragments():
+    """
+    PURPOSE: Verifies tiny chunks (short dialogue lines, stray headings) are
+    folded into the preceding chunk instead of polluting the vector index.
+    CAPABILITIES:
+    - Chunks below min_words merge into their predecessor.
+    - Merged predecessors get embeddings reset for re-encoding.
+    - Adequately sized chunks pass through untouched.
+    """
+    from app.engines.hierarchical_chunker import RenderedChunk
+    from app.engines.markdown_parser import NodeType
+
+    mock_vector_engine = MockVectorEngine()
+    engine = HierarchicalSemanticEngine(vector_engine=mock_vector_engine)
+
+    prose = {"node_type": NodeType.PARAGRAPH}
+    big_text = "word " * 60
+    chunks = [
+        RenderedChunk(chunk_id="c1", parent_node_id="n1", text=big_text.strip(), metadata=dict(prose), embeddings=[0.1] * 3),
+        RenderedChunk(chunk_id="c2", parent_node_id="n2", text="Context: Chapter I\nContent: “Dive!”", metadata=dict(prose), embeddings=[0.2] * 3),
+        RenderedChunk(chunk_id="c3", parent_node_id="n3", text=big_text.strip(), metadata=dict(prose), embeddings=[0.3] * 3),
+    ]
+
+    merged = engine._merge_undersized_chunks(chunks, min_words=10)
+
+    assert len(merged) == 2
+    # The tiny quote was folded into chunk one, context prefix stripped.
+    assert merged[0].text.endswith("“Dive!”")
+    assert "Context: Chapter I" not in merged[0].text
+    # The absorbing chunk must be re-embedded.
+    assert merged[0].embeddings is None
+    # The healthy chunk is untouched.
+    assert merged[1].chunk_id == "c3"
+    assert merged[1].embeddings == [0.3] * 3
+
+async def test_merge_undersized_chunks_keeps_leading_fragment():
+    """
+    PURPOSE: Verifies a tiny first chunk survives when there is no predecessor to merge into.
+    """
+    from app.engines.hierarchical_chunker import RenderedChunk
+    from app.engines.markdown_parser import NodeType
+
+    mock_vector_engine = MockVectorEngine()
+    engine = HierarchicalSemanticEngine(vector_engine=mock_vector_engine)
+
+    chunks = [RenderedChunk(chunk_id="c1", parent_node_id="n1", text="Tiny.", metadata={"node_type": NodeType.PARAGRAPH}, embeddings=None)]
+    merged = engine._merge_undersized_chunks(chunks, min_words=10)
+
+    assert len(merged) == 1
+    assert merged[0].text == "Tiny."

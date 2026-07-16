@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Embedding config
     embedding_model: str = Field(default="BAAI/bge-base-en-v1.5")
     embedding_dimension: int = Field(default=768)
+    # 256 fits short sentences on a ~6GB GPU but OOMs on 400-token chunks;
+    # 64 handles both. Tune upward on bigger cards via env.
+    embedding_batch_size: int = Field(default=64)
     
     # Chunker config
     window_size: int = Field(default=3)
