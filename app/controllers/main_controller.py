@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime
+import logging
 from fastapi import HTTPException
 from app.utils.pdf_extractor import parsePdf
 from app.db.database_manager import DatabaseManager, RAGIngestionManager
@@ -8,6 +8,21 @@ from app.db.retrieval_manager import HierarchicalRAGRetriever
 from app.engines.semantic_chunker import SemanticEngine
 from app.core.config import settings
 from app.engines.agent_engine import ReActAgent
+
+# Dedicated ingestion audit logger writing to a configurable file path,
+# so the log location is an environment concern instead of a hardcoded
+# file in the repo root.
+ingestion_logger = logging.getLogger("rag.ingestion")
+
+def _configure_ingestion_logger():
+    if not ingestion_logger.handlers:
+        log_dir = os.path.dirname(settings.ingestion_log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        handler = logging.FileHandler(settings.ingestion_log_path)
+        handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+        ingestion_logger.addHandler(handler)
+        ingestion_logger.setLevel(logging.INFO)
 
 class MainController:
     """
@@ -44,7 +59,6 @@ class MainController:
         3. Segments document and ingests vectors.
         """
         start_time = time.perf_counter()
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         filename = os.path.basename(file_path)
         file_size_bytes = 0
         try:
@@ -53,8 +67,7 @@ class MainController:
         except Exception:
             pass
 
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        log_file_path = os.path.join(project_root, "ingestion.log")
+        _configure_ingestion_logger()
 
         try:
             # Step 1: Parse PDF to markdown representation.
@@ -79,17 +92,14 @@ class MainController:
             )
 
             elapsed_time = time.perf_counter() - start_time
-            
-            # Log successful ingestion
-            log_line = (
-                f"[{timestamp}] SUCCESS | File: {filename} | "
+
+            ingestion_logger.info(
+                f"SUCCESS | File: {filename} | "
                 f"Size: {file_size_bytes / (1024 * 1024):.2f} MB | "
                 f"Duration: {elapsed_time:.2f}s | "
                 f"Chunks: {chunk_count} | "
-                f"Doc ID: {db_doc.id}\n"
+                f"Doc ID: {db_doc.id}"
             )
-            with open(log_file_path, "a") as f:
-                f.write(log_line)
 
             return {
                 "message": "Document successfully parsed and ingested.",
@@ -99,17 +109,15 @@ class MainController:
             }
         except Exception as e:
             elapsed_time = time.perf_counter() - start_time
-            # Log failed ingestion
-            log_line = (
-                f"[{timestamp}] FAILURE | File: {filename} | "
+            ingestion_logger.error(
+                f"FAILURE | File: {filename} | "
                 f"Size: {file_size_bytes / (1024 * 1024):.2f} MB | "
                 f"Duration: {elapsed_time:.2f}s | "
-                f"Error: {str(e)}\n"
+                f"Error: {str(e)}"
             )
-            with open(log_file_path, "a") as f:
-                f.write(log_line)
-            
-            raise e
+            # Bare raise preserves the original traceback instead of
+            # re-raising from this frame.
+            raise
 
     async def fetch_document(self, doc_id: str):
         """Fetches document metadata by its hash ID."""

@@ -14,13 +14,10 @@ def process_pdf_task(self, file_path: str):
     Runs asynchronously inside a dedicated worker process.
     """
     controller = MainController()
-    
-    # Celery tasks are synchronous by default.
-    # We initialize an asyncio event loop to run our async controller logic.
-    loop = asyncio.get_event_loop()
-    if loop.is_closed():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-    result = loop.run_until_complete(controller.process_and_ingest_pdf(file_path))
-    return result
+
+    # Celery tasks are synchronous, so each task runs the async controller
+    # logic inside its own fresh event loop. asyncio.run() creates the loop,
+    # runs the coroutine, and tears the loop down cleanly — unlike the
+    # deprecated get_event_loop() pattern, which breaks when no loop exists
+    # in the worker thread or a previous task left a closed one behind.
+    return asyncio.run(controller.process_and_ingest_pdf(file_path))

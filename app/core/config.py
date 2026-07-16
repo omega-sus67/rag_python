@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     db_direct_port: int = Field(default=5433)
     db_name: str = Field(default="tutorial_db")
 
+    # File handling
+    upload_dir: str = Field(default="data/uploads")
+    ingestion_log_path: str = Field(default="data/ingestion.log")
+
     
     # Embedding config
     embedding_model: str = Field(default="BAAI/bge-base-en-v1.5")
