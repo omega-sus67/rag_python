@@ -3,7 +3,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
 # Import pgvector Vector distance operator
-from pgvector.sqlalchemy import Vector
 
 from app.engines.semantic_chunker import SemanticEngine
 from app.db.database_manager import dbChunk, dbFile

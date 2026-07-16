@@ -1,5 +1,4 @@
 from fastapi import HTTPException
-from pydantic import BaseModel
 import pymupdf4llm
 import re
 from dataclasses import dataclass

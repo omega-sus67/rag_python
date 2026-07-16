@@ -1,12 +1,10 @@
 import hashlib
-import numpy as np
 from typing import List, Optional
 from fastapi import HTTPException
-from pydantic import BaseModel
 
 from sqlalchemy import Column, Integer, String, text, select, ForeignKey, Index
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from pgvector.sqlalchemy import Vector
 
 # Import custom domain structures and engines
@@ -262,7 +260,7 @@ class RAGIngestionManager:
                 return len(rendered_chunks)
             except Exception as e:
                 # Rollback transaction to protect database state integrity on failures.
-                print(f"[Ingestion] Database transaction failed. Rolling back...", flush=True)
+                print("[Ingestion] Database transaction failed. Rolling back...", flush=True)
                 await session.rollback()
                 raise e
 

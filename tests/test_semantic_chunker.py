@@ -1,7 +1,7 @@
 # tests/test_semantic_chunker.py
 
 import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 from app.engines.semantic_chunker import SlidingSemanticChunker, SemanticEngine, SemanticBoundaryDetector
 
 def test_sentence_splitter_iggnores_abbreviations():

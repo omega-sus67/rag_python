@@ -2,7 +2,7 @@
 
 import pytest
 import numpy as np
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from fastapi import HTTPException
 
 from app.db.database_manager import dbFile, dbChunk, DatabaseManager, RAGIngestionManager

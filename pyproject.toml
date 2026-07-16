@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 160
+target-version = "py312"
+exclude = [".venv", "trialData", "__pycache__"]
+
+[tool.ruff.lint]
+# Defaults (pyflakes + a pycodestyle subset): real bugs, not style bikeshedding.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pytest.ini_options]
+norecursedirs = ["mutants", ".git", ".venv"]
+pythonpath = ["."]
+asyncio_mode = "auto"

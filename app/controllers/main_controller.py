@@ -80,7 +80,7 @@ class MainController:
                 raise HTTPException(status_code=500, detail=f"PDF Parsing Failed: {str(e)}")
 
             # Step 2: Save document metadata. Will throw 400 error on duplicate hashes.
-            print(f"[Ingestion] Phase 2: PDF parsed successfully. Saving document metadata and checking for duplicates...", flush=True)
+            print("[Ingestion] Phase 2: PDF parsed successfully. Saving document metadata and checking for duplicates...", flush=True)
             db_doc = await self.db_manager.save_document(doc)
             
             # Step 3: Run segment and ingestion transaction.
