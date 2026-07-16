@@ -1,17 +1,34 @@
+# Python
 __pycache__/
-.venv/
-.env
 *.pyc
-fast_api.py
-postgres_tutorial.py
+.venv/
+
+# Environment / secrets
+.env
+
+# Generated artifacts
+ingestion.log
+*.log
+.coverage
+.pytest_cache/
+data/
+
+# Local corpora and scratch data (large / copyrighted PDFs stay out of git)
 trialData/
+*.pdf
+
+# Personal notes and drafts
 dev_log.md
 rag_pipeline_review.md
 cli_instructions.md
 scalable_backend.md
 improvements.md
 qna.md
+additions.md
 resume.tex
-setup.cfg
 buf
-.gitignore
+
+# Local tool configs / experiments
+setup.cfg
+fast_api.py
+postgres_tutorial.py
