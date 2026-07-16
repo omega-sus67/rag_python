@@ -2,32 +2,109 @@
   {
     "query": "Why does Peter Pan refuse to grow up?",
     "document_title": "Peter-Pan.pdf",
-    "expected_substrings": [
-      "remain a boy",
-      "eternal youth",
-      "responsibilities of grown-ups",
-      "wants always to be a little boy"
-    ],
-    "reference_answer": "Peter Pan refuses to grow up because he wants to remain a young boy forever to play and have fun, escaping the serious responsibilities, rules, and limits of adulthood."
+    "expected_substrings": ["always to be a little boy"],
+    "reference_answer": "Peter ran away the day he was born because he heard his parents talking about what he was to be when he became a man; he wants always to be a little boy and to have fun."
   },
   {
-    "query": "Who is the captain of the Jolly Roger?",
+    "query": "Who is the captain of the pirate ship Jolly Roger?",
     "document_title": "Peter-Pan.pdf",
-    "expected_substrings": [
-      "Hook",
-      "Captain Hook",
-      "Jas Hook"
-    ],
-    "reference_answer": "The captain of the Jolly Roger is Captain Hook (James Hook), who is Peter Pan's primary nemesis."
+    "expected_substrings": ["Jas. Hook", "Captain Hook", "James Hook"],
+    "reference_answer": "Captain James (Jas.) Hook commands the Jolly Roger and is Peter Pan's chief enemy."
   },
   {
-    "query": "Where do the lost boys live?",
+    "query": "What directions does Peter give for flying to Neverland?",
     "document_title": "Peter-Pan.pdf",
-    "expected_substrings": [
-      "Neverland",
-      "Never Land",
-      "underground home"
-    ],
-    "reference_answer": "The lost boys live in Neverland, specifically in an underground home accessed through hollow trees."
+    "expected_substrings": ["second to the right", "straight on till morning"],
+    "reference_answer": "Second to the right, and straight on till morning."
+  },
+  {
+    "query": "What is Captain Hook afraid of?",
+    "document_title": "Peter-Pan.pdf",
+    "expected_substrings": ["crocodile"],
+    "reference_answer": "Hook is terrified of the crocodile that ate his hand and swallowed a clock, whose ticking warns him of its approach."
+  },
+  {
+    "query": "What is Wendy's full name?",
+    "document_title": "Peter-Pan.pdf",
+    "expected_substrings": ["Wendy Moira Angela Darling"],
+    "reference_answer": "Wendy Moira Angela Darling."
+  },
+  {
+    "query": "How is Tinker Bell saved after drinking the poisoned medicine?",
+    "document_title": "Peter-Pan.pdf",
+    "expected_substrings": ["believe in fairies", "clap"],
+    "reference_answer": "Peter appeals to all children who believe in fairies to clap their hands, and the clapping saves Tinker Bell."
+  },
+  {
+    "query": "Why does Peter first come back to the Darling nursery?",
+    "document_title": "Peter-Pan.pdf",
+    "expected_substrings": ["shadow"],
+    "reference_answer": "Peter returns to the nursery to retrieve his shadow, which was shut in the window and kept by Mrs. Darling."
+  },
+  {
+    "query": "Who does the narrator of White Nights meet on the canal embankment?",
+    "document_title": "white_nights.pdf",
+    "expected_substrings": ["Nastenka"],
+    "reference_answer": "The lonely narrator meets a young woman named Nastenka on the embankment at night."
+  },
+  {
+    "query": "Who is Nastenka in love with and waiting for?",
+    "document_title": "white_nights.pdf",
+    "expected_substrings": ["lodger"],
+    "reference_answer": "Nastenka is in love with her grandmother's former lodger, who promised to return for her in a year."
+  },
+  {
+    "query": "How did Nastenka's grandmother keep her from going out?",
+    "document_title": "white_nights.pdf",
+    "expected_substrings": ["pinned"],
+    "reference_answer": "Her blind grandmother pinned Nastenka's dress to her own so she could not leave her side."
+  },
+  {
+    "query": "How much money did Della have saved to buy Jim a Christmas present?",
+    "document_title": "1-the_gift_of_the_magi_0.pdf",
+    "expected_substrings": ["1.87"],
+    "reference_answer": "Della had one dollar and eighty-seven cents, sixty cents of it in pennies."
+  },
+  {
+    "query": "What did Della sell to get money for Jim's present?",
+    "document_title": "1-the_gift_of_the_magi_0.pdf",
+    "expected_substrings": ["Sofronie", "hair"],
+    "reference_answer": "Della sold her long hair to Madame Sofronie for twenty dollars."
+  },
+  {
+    "query": "What present did Della buy for Jim?",
+    "document_title": "1-the_gift_of_the_magi_0.pdf",
+    "expected_substrings": ["chain"],
+    "reference_answer": "Della bought a platinum fob chain for Jim's prized watch."
+  },
+  {
+    "query": "What gift did Jim buy for Della, and how did he pay for it?",
+    "document_title": "1-the_gift_of_the_magi_0.pdf",
+    "expected_substrings": ["combs", "watch"],
+    "reference_answer": "Jim bought Della the set of combs she had admired, paying for them by selling his watch."
+  },
+  {
+    "query": "Which document lists the security controls an organization has selected and justifies inclusions and exclusions?",
+    "document_title": "iso27001.pdf",
+    "expected_substrings": ["Statement of Applicability"],
+    "reference_answer": "The Statement of Applicability lists the selected Annex A controls with justification for inclusion or exclusion."
+  },
+  {
+    "query": "Who must demonstrate leadership and commitment with respect to the information security management system?",
+    "document_title": "iso27001.pdf",
+    "expected_substrings": ["top management"],
+    "reference_answer": "Top management must demonstrate leadership and commitment to the ISMS."
+  },
+  {
+    "query": "What actions are required when a nonconformity occurs?",
+    "document_title": "iso27001.pdf",
+    "expected_substrings": ["nonconformity", "corrective action"],
+    "reference_answer": "The organization must react to the nonconformity, evaluate the need to eliminate its causes, implement corrective action, and review its effectiveness."
+  },
+  {
+    "query": "What must an organization do with the results of its information security risk assessment?",
+    "document_title": "iso27001.pdf",
+    "expected_substrings": ["risk treatment", "risk assessment"],
+    "reference_answer": "It must select risk treatment options, determine the controls needed, and produce a risk treatment plan based on the risk assessment results."
   }
 ]

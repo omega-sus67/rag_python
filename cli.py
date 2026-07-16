@@ -12,8 +12,6 @@ from rich.prompt import Prompt
 import time
 import hashlib
 from app.utils.pdf_extractor import parsePdf
-from app.db.database_manager import dbFile
-from sqlalchemy import text
 
 from app.controllers.main_controller import MainController
 from fastapi import HTTPException
@@ -103,7 +101,7 @@ async def query_document(file_id: str, query: str, top_k: int):
                 score_color = "green" if sim_score > 0.5 else "yellow" if sim_score > 0.3 else "red"
                 
                 content = Text()
-                content.append(f"Similarity: ", style="bold")
+                content.append("Similarity: ", style="bold")
                 content.append(f"{sim_score:.2%}\n\n", style=f"bold {score_color}")
                 content.append(res['text'])
                 
@@ -181,7 +179,7 @@ async def start_agent_chat():
                     console.print(Panel(obs_snippet, title="Observation", border_style="purple"))
                     
             # Print Final Answer
-            console.print("\n");
+            console.print("\n")
             console.print(Panel(
                 result["answer"], 
                 title="[bold green]Final Answer[/]", 
@@ -292,6 +290,84 @@ async def evaluate_ingestion(filepath: str, force: bool = False):
         border_style="green"
     ))
 
+async def evaluate_retrieval(dataset_path: str, corpus_dir: str, force: bool, cleanup: bool, markdown: bool):
+    """
+    Retrieval-quality evaluation:
+    1. Ingests the eval corpus under both chunking strategies (semantic vs fixed-size baseline).
+    2. Scores hit-rate@k and MRR for each strategy against the question dataset.
+    3. Prints a comparison table (optionally as markdown for the README).
+    """
+    from app.eval.retrieval_eval import RetrievalEvaluator
+    from rich.table import Table
+
+    if not os.path.exists(dataset_path):
+        console.print(f"[bold red]Error:[/] Dataset not found at '{dataset_path}'")
+        sys.exit(1)
+
+    with open(dataset_path) as f:
+        dataset = json.load(f)
+    documents = sorted({entry["document_title"] for entry in dataset})
+
+    console.print(Panel(
+        f"[bold cyan]Retrieval Quality Evaluation[/]\n"
+        f"[dim]{len(dataset)} queries over {len(documents)} documents: {', '.join(documents)}[/]",
+        border_style="cyan"
+    ))
+
+    controller = MainController()
+    await controller.initialize_system()
+    evaluator = RetrievalEvaluator(controller.db_manager, controller.vector_engine)
+
+    if cleanup:
+        removed = await evaluator.cleanup_corpus()
+        console.print(f"[yellow]Removed {removed} eval documents from the database.[/]")
+        return
+
+    with Progress(SpinnerColumn(), TextColumn("[yellow]{task.description}"), transient=True) as progress:
+        progress.add_task("Preparing corpus under both chunking strategies (parse, chunk, embed, store)...")
+        prep_stats = await evaluator.prepare_corpus(corpus_dir, documents, force=force)
+
+    for strategy, s in prep_stats.items():
+        console.print(f"[dim]{strategy}: {s['documents']} ingested, {s['skipped']} already present, {s['chunks']} new chunks[/]")
+
+    with Progress(SpinnerColumn(), TextColumn("[yellow]{task.description}"), transient=True) as progress:
+        progress.add_task(f"Running {len(dataset)} queries against both strategies...")
+        results = await evaluator.evaluate(dataset)
+
+    ks = results["ks"]
+    table = Table(title=f"Retrieval Quality ({results['num_queries']} queries)", border_style="cyan")
+    table.add_column("Strategy", style="bold cyan")
+    for k in ks:
+        table.add_column(f"hit-rate@{k}", justify="right", style="green")
+    table.add_column("MRR", justify="right", style="bold green")
+
+    for strategy, res in results["strategies"].items():
+        table.add_row(
+            strategy,
+            *[f"{res['hit_rate_at'][k]:.1%}" for k in ks],
+            f"{res['mrr']:.3f}"
+        )
+    console.print("\n")
+    console.print(table)
+
+    # Show which queries missed, per strategy - the interesting failures.
+    for strategy, res in results["strategies"].items():
+        misses = [d for d in res["details"] if d["first_hit_rank"] is None]
+        if misses:
+            console.print(f"\n[bold yellow]{strategy} misses:[/]")
+            for m in misses:
+                console.print(f"  [dim]- {m['query']} ({m['document']})[/]")
+
+    if markdown:
+        console.print("\n[bold]Markdown (paste into README):[/]\n")
+        header = "| Strategy | " + " | ".join(f"hit-rate@{k}" for k in ks) + " | MRR |"
+        sep = "|---" * (len(ks) + 2) + "|"
+        print(header)
+        print(sep)
+        for strategy, res in results["strategies"].items():
+            cells = " | ".join(f"{res['hit_rate_at'][k]:.1%}" for k in ks)
+            print(f"| {strategy} | {cells} | {res['mrr']:.3f} |")
+
 def main():
     """Entrypoint parsing CLI arguments and routing calls to respective async handlers."""
     parser = argparse.ArgumentParser(description="RAG Pipeline CLI")
@@ -300,16 +376,24 @@ def main():
     # Ingest command subcommand.
     ingest_parser = subparsers.add_parser("ingest", help="Ingest a PDF document into the database")
     ingest_parser.add_argument("filepath", type=str, help="Path to the PDF file")
-    agent_parser = subparsers.add_parser("agent", help="Start an interactive reasoning agent chat session")
+    subparsers.add_parser("agent", help="Start an interactive reasoning agent chat session")
     
     # Query command subcommand.
     query_parser = subparsers.add_parser("query", help="Query an ingested document")
     query_parser.add_argument("file_id", type=str, help="The Document ID to query")
     query_parser.add_argument("query_text", type=str, help="Your semantic search query")
     query_parser.add_argument("--top", type=int, default=3, help="Number of chunks to return (default: 3)")
-    
+
+    # Retrieval-quality evaluation subcommand.
+    eval_parser = subparsers.add_parser("evaluate-retrieval", help="Score semantic vs fixed-size chunking on hit-rate@k and MRR")
+    eval_parser.add_argument("--dataset", type=str, default="eval_dataset.json", help="Path to the question dataset JSON")
+    eval_parser.add_argument("--corpus", type=str, default="trialData", help="Directory containing the eval PDFs")
+    eval_parser.add_argument("--force", action="store_true", help="Re-ingest eval documents even if already present")
+    eval_parser.add_argument("--cleanup", action="store_true", help="Remove all eval documents from the database and exit")
+    eval_parser.add_argument("--markdown", action="store_true", help="Also print the results table as markdown")
+
     args = parser.parse_args()
-    
+
     # Command routing using async run loops.
     if args.command == "ingest":
         asyncio.run(ingest_document(args.filepath))
@@ -317,6 +401,8 @@ def main():
         asyncio.run(query_document(args.file_id, args.query_text, args.top))
     elif args.command == "agent":
         asyncio.run(start_agent_chat())
+    elif args.command == "evaluate-retrieval":
+        asyncio.run(evaluate_retrieval(args.dataset, args.corpus, args.force, args.cleanup, args.markdown))
     else:
         parser.print_help()
 
