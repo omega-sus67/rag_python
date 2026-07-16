@@ -1,20 +1,21 @@
-version: '3.8'
-
 services:
   # 1. The Database (with pgvector installed)
-    # 1. The Database (with pgvector installed)
   db:
     image: ankane/pgvector:latest
     container_name: postgres_db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: tutorial_db
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-tutorial_db}
     ports:
       - "5435:5432" # Expose the real Postgres port directly to the host
     volumes:
       - pgdata:/var/lib/postgresql/data
-
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-tutorial_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   # 2. Database Connection Bouncer (Pools connections)
   pgbouncer:
@@ -23,9 +24,9 @@ services:
     environment:
       - DB_HOST=db
       - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=password
-      - DB_NAME=tutorial_db
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-password}
+      - DB_NAME=${DB_NAME:-tutorial_db}
       - POOL_MODE=transaction
       - MAX_CLIENT_CONN=10000
       - DEFAULT_POOL_SIZE=100
@@ -33,7 +34,8 @@ services:
     ports:
       - "6432:5432"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   # 3. The Message Queue (Redis)
   redis:
@@ -42,31 +44,72 @@ services:
     ports:
       - "6379:6379"
 
-  # 4. Celery Worker (Processes heavy document ingestion asynchronously)
-  worker:
-    image: python:3.12-slim
-    container_name: celery_worker
-    command: python -m celery -A app.worker.celery_app worker --loglevel=info
-    volumes:
-      - .:/home/omega_sus/Desktop/rag_python
-    working_dir: /home/omega_sus/Desktop/rag_python
-    environment:
+  # 4. FastAPI application server
+  api:
+    build: .
+    container_name: rag_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment: &app_env
       - DB_HOST=pgbouncer
       - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=password
-      - DB_NAME=tutorial_db
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-password}
+      - DB_NAME=${DB_NAME:-tutorial_db}
       - REDIS_URL=redis://redis:6379/0
-      - LLM_PROVIDER=ollama
-      - LLM_API_BASE=http://host.docker.internal:11434
-      - PYTHONPATH=/home/omega_sus/Desktop/rag_python:/home/omega_sus/Desktop/rag_python/.venv/lib/python3.12/site-packages
-      - PYTHONUNBUFFERED=1
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_API_BASE=${LLM_API_BASE:-https://generativelanguage.googleapis.com/v1beta}
+      - LLM_MODEL=${LLM_MODEL:-gemini-1.5-flash}
+    volumes:
+      # Shared with the worker: the API writes uploads here, the worker reads them.
+      - ./data:/app/data
+      # Cache downloaded embedding models between container rebuilds.
+      - hf_cache:/root/.cache/huggingface
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - db
-      - pgbouncer
-      - redis
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_started
+
+  # 5. Celery Worker (Processes heavy document ingestion asynchronously, CPU)
+  worker:
+    build: .
+    container_name: celery_worker
+    command: celery -A app.worker.celery_app worker --loglevel=info
+    environment: *app_env
+    volumes:
+      - ./data:/app/data
+      - hf_cache:/root/.cache/huggingface
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_started
+
+  # 6. GPU variant of the worker: `docker compose --profile gpu up` starts this
+  # instead of relying on every machine having an NVIDIA runtime.
+  worker-gpu:
+    profiles: ["gpu"]
+    build: .
+    container_name: celery_worker_gpu
+    command: celery -A app.worker.celery_app worker --loglevel=info
+    environment: *app_env
+    volumes:
+      - ./data:/app/data
+      - hf_cache:/root/.cache/huggingface
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_started
     deploy:
       resources:
         reservations:
@@ -77,4 +120,4 @@ services:
 
 volumes:
   pgdata:
-
+  hf_cache:

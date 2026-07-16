@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+data/
+trialData/
+*.pdf
+*.log
+.env
+docs/
+*.md
+!README.md
