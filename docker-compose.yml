@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # 1. The Database (with pgvector installed)
+    # 1. The Database (with pgvector installed)
+  db:
+    image: ankane/pgvector:latest
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: tutorial_db
+    ports:
+      - "5435:5432" # Expose the real Postgres port directly to the host
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+
+  # 2. Database Connection Bouncer (Pools connections)
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: pgbouncer_pool
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=tutorial_db
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=10000
+      - DEFAULT_POOL_SIZE=100
+      - AUTH_TYPE=plain
+    ports:
+      - "6432:5432"
+    depends_on:
+      - db
+
+  # 3. The Message Queue (Redis)
+  redis:
+    image: redis:alpine
+    container_name: redis_queue
+    ports:
+      - "6379:6379"
+
+  # 4. Celery Worker (Processes heavy document ingestion asynchronously)
+  worker:
+    image: python:3.12-slim
+    container_name: celery_worker
+    command: python -m celery -A app.worker.celery_app worker --loglevel=info
+    volumes:
+      - .:/home/omega_sus/Desktop/rag_python
+    working_dir: /home/omega_sus/Desktop/rag_python
+    environment:
+      - DB_HOST=pgbouncer
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=tutorial_db
+      - REDIS_URL=redis://redis:6379/0
+      - LLM_PROVIDER=ollama
+      - LLM_API_BASE=http://host.docker.internal:11434
+      - PYTHONPATH=/home/omega_sus/Desktop/rag_python:/home/omega_sus/Desktop/rag_python/.venv/lib/python3.12/site-packages
+      - PYTHONUNBUFFERED=1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - db
+      - pgbouncer
+      - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  pgdata:
+

@@ -6,8 +6,10 @@ class Settings(BaseSettings):
     db_user: str = Field(default="postgres")
     db_password: str = Field(default="password")
     db_host: str = Field(default="localhost")
-    db_port: int = Field(default=5433)
+    db_port: int = Field(default=6432)
+    db_direct_port: int = Field(default=5433)
     db_name: str = Field(default="tutorial_db")
+
     
     # Embedding config
     embedding_model: str = Field(default="BAAI/bge-base-en-v1.5")
@@ -41,7 +43,7 @@ class Settings(BaseSettings):
 
     @property
     def async_postgres_url(self) -> str:
-        return f"postgresql+asyncpg://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/postgres"
+        return f"postgresql+asyncpg://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_direct_port}/postgres"
 
     model_config = SettingsConfigDict(
         env_file=".env",
