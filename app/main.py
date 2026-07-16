@@ -47,10 +47,13 @@ async def upload_file(file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
-    # Sanitize to a bare filename and prefix a UUID so concurrent uploads
-    # of identically-named files cannot overwrite each other.
+    # Sanitize to a bare filename, then isolate each upload in a UUID
+    # subdirectory: concurrent same-named uploads cannot overwrite each
+    # other, and the basename stays clean for document title derivation.
     safe_name = os.path.basename(file.filename)
-    dest_path = os.path.join(settings.upload_dir, f"{uuid.uuid4().hex[:8]}_{safe_name}")
+    upload_subdir = os.path.join(settings.upload_dir, uuid.uuid4().hex[:8])
+    os.makedirs(upload_subdir, exist_ok=True)
+    dest_path = os.path.join(upload_subdir, safe_name)
 
     # Stream to disk in 1 MB pieces so large PDFs never sit fully in memory.
     with open(dest_path, "wb") as out:

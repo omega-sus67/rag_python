@@ -88,6 +88,11 @@ Three separate reasons — know all three:
    disk in pieces. `await file.read()` with no size would buffer the entire
    PDF in RAM — fine for 1 MB, bad for 500 MB.
 
+One refinement found during live verification: prefixing the UUID onto the
+*filename* polluted document titles (titles derive from the file basename),
+so each upload now goes into a UUID **subdirectory** instead —
+`data/uploads/<uuid>/report.pdf` — keeping collision safety and clean titles.
+
 Also fixed: `/task/status` used to return `task_result.result` raw. For a
 **failed** Celery task, `.result` is the raised *exception object*, which
 FastAPI cannot serialize to JSON — so checking the status of a failed task
