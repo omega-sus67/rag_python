@@ -275,3 +275,51 @@ async def test_database_manager_save_document_general_exception():
         await db_mgr.save_document(doc)
         
     assert "Session error" in str(exc_info.value)
+
+
+async def test_rag_ingestion_manager_concurrency():
+    """
+    PURPOSE: Verifies that RAGIngestionManager can handle multiple concurrent document ingestion tasks.
+    CAPABILITIES:
+    - Simulates parallel ingestion tasks using asyncio.gather.
+    - Verifies that separate requests retrieve and commit their own SessionLocal instances.
+    """
+    import asyncio  # Import inside the test to keep it self-contained
+    
+    db_mgr = MagicMock()
+    
+    # Create 5 distinct database sessions to simulate 5 concurrent database connections
+    sessions = [AsyncMock() for _ in range(5)]
+    for sess in sessions:
+        sess.__aenter__.return_value = sess
+        
+    # Configure the mock DB manager to yield a new session for each call sequentially
+    db_mgr.SessionLocal = MagicMock(side_effect=sessions)
+    vector_engine = MagicMock()
+    
+    ingestion_mgr = RAGIngestionManager(db_manager=db_mgr, vector_engine=vector_engine)
+    
+    # Mock parsing behavior to return a single dummy chunk
+    mock_chunks = [
+        RenderedChunk(chunk_id="chk_1", parent_node_id="n1", text="text 1", metadata={}, embeddings=[0.1]*384)
+    ]
+    ingestion_mgr.chunking_engine.process_document = AsyncMock(return_value=mock_chunks)
+    
+    # 1. Spawn 5 parallel ingestion tasks
+    tasks = [
+        ingestion_mgr.ingest_document(f"content {i}", f"file_{i}", f"source_{i}.md")
+        for i in range(5)
+    ]
+    
+    # 2. Run all tasks concurrently
+    counts = await asyncio.gather(*tasks)
+    
+    # 3. Assertions
+    assert len(counts) == 5
+    assert all(c == 1 for c in counts)  # Each file should report 1 ingested chunk
+    
+    # 4. Verify connection pooling isolation
+    assert db_mgr.SessionLocal.call_count == 5
+    for sess in sessions:
+        sess.add.assert_called_once()
+        sess.commit.assert_called_once()
