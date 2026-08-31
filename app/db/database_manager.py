@@ -1,8 +1,9 @@
 import hashlib
+import uuid
 from typing import List, Optional
 from fastapi import HTTPException
 
-from sqlalchemy import Column, Integer, String, text, select, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, LargeBinary, text, select, ForeignKey, Index
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from pgvector.sqlalchemy import Vector
@@ -55,6 +56,29 @@ class dbChunk(Base):
             text_data=rendered_chunk.text,
             embeddings=vector
         )
+class dbUploadBlob(Base):
+    """
+    Transient storage for an uploaded PDF's raw bytes.
+
+    This exists because the web process and the worker process do not share a
+    filesystem in production — they are separate containers on separate hosts.
+    Locally, docker-compose bind-mounts ./data into both and hides the problem;
+    on a PaaS the worker would receive a path to a file that does not exist.
+
+    Postgres carries the bytes instead of the queue: Redis free tiers cap at
+    ~30 MB total, so PDF payloads cannot ride the broker. The queue message
+    stays a small id, which is what a queue should carry.
+
+    Rows are deleted by the worker once ingestion finishes, so this table is a
+    handoff buffer, not durable storage.
+    """
+    __tablename__ = "upload_blobs"
+
+    id = Column(String, primary_key=True, index=True)
+    filename = Column(String, nullable=False)
+    content = Column(LargeBinary, nullable=False)
+
+
 Index(
         "ix_doc_chunks_embeddings_hnsw",
         dbChunk.embeddings,
@@ -69,39 +93,73 @@ class DatabaseManager:
     Manages database connection lifecycle, pool setup, tables initialization,
     and core CRUD queries for documents.
     """
-    def __init__(self, database_url: str = settings.async_database_url):
+    def __init__(self, database_url: Optional[str] = None, connect_args: Optional[dict] = None):
         # Create asynchronous SQLAlchemy engine using the configured postgres credentials.
-        self.engine = create_async_engine(database_url, echo=False)
+        # connect_args carries the TLS settings that had to be stripped out of the
+        # URL for asyncpg's benefit — see Settings.db_connect_args.
+        # pool_pre_ping matters on managed Postgres specifically: Neon closes idle
+        # connections, and without it the first query after an idle period dies.
+        self.engine = create_async_engine(
+            database_url or settings.async_database_url,
+            echo=False,
+            connect_args=settings.db_connect_args if connect_args is None else connect_args,
+            pool_pre_ping=True,
+        )
         self.SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
-        
+
     async def create_tables(self):
         """
-        Initializes postgres schemas:
-        1. Checks database existence using a temporary autocommit connection.
-        2. Creates database and installs the pgvector extension if missing.
-        3. Generates tables based on defined SQLAlchemy models.
-        """
-        temp_url = settings.async_postgres_url
-        # AUTOCOMMIT isolation level is mandatory for executing 'CREATE DATABASE' command.
-        async_temp_engine = create_async_engine(temp_url, isolation_level="AUTOCOMMIT")
-        
-        async with async_temp_engine.connect() as conn:
-            # Verify if the target database name exists in system tables.
-            res = await conn.execute(text(f"SELECT 1 FROM pg_database WHERE datname='{settings.db_name}'"))
-            if not res.scalar():
-                print(f"Database '{settings.db_name}' does not exist. Creating it...")
-                await conn.execute(text(f"CREATE DATABASE {settings.db_name}"))
-            else:
-                print(f"Database '{settings.db_name}' already exists.")
-                
-        await async_temp_engine.dispose()
+        Brings the schema up to date inside the database we are already pointed at.
 
-        # Connect to newly created/verified database and create tables.
+        Deliberately does NOT create the database itself. Managed providers hand
+        you a database that already exists and a role with no permission to
+        create siblings, and the old maintenance-database connection failed on
+        both counts. Everything here is idempotent, so re-running is safe.
+        """
         async with self.engine.begin() as conn:
             # Enable the vector indexing support in Postgres.
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
             # Generate all tables described by Base class.
             await conn.run_sync(Base.metadata.create_all)
+
+    async def ping(self) -> None:
+        """
+        Cheapest possible liveness probe. Raises if the database is unreachable,
+        which is what /health turns into a 503.
+        """
+        async with self.engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+
+    async def store_upload_blob(self, filename: str, content: bytes) -> str:
+        """
+        Parks an uploaded PDF's bytes in Postgres and returns the id the queue
+        message will carry. See dbUploadBlob for why the bytes go here.
+        """
+        blob_id = uuid.uuid4().hex
+        async with self.SessionLocal() as session:
+            session.add(dbUploadBlob(id=blob_id, filename=filename, content=content))
+            await session.commit()
+        return blob_id
+
+    async def fetch_upload_blob(self, blob_id: str) -> Optional[tuple]:
+        """Returns (filename, content) for a queued upload, or None if it is gone."""
+        async with self.SessionLocal() as session:
+            result = await session.execute(select(dbUploadBlob).where(dbUploadBlob.id == blob_id))
+            blob = result.scalar()
+            if blob is None:
+                return None
+            return blob.filename, blob.content
+
+    async def delete_upload_blob(self, blob_id: str) -> None:
+        """
+        Drops the handoff row once the worker is done with it. Called in a
+        finally block, so a failed ingestion does not leak the bytes either.
+        """
+        async with self.SessionLocal() as session:
+            await session.execute(
+                text("DELETE FROM upload_blobs WHERE id = :blob_id"), {"blob_id": blob_id}
+            )
+            await session.commit()
 
     async def save_document(self, doc: Document) -> dbFile:
         """

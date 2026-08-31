@@ -14,6 +14,7 @@ import hashlib
 from app.utils.pdf_extractor import parsePdf
 
 from app.controllers.main_controller import MainController
+from app.core.config import settings
 from fastapi import HTTPException
 
 # Initialize global rich terminal console.
@@ -368,6 +369,85 @@ async def evaluate_retrieval(dataset_path: str, corpus_dir: str, force: bool, cl
             cells = " | ".join(f"{res['hit_rate_at'][k]:.1%}" for k in ks)
             print(f"| {strategy} | {cells} | {res['mrr']:.3f} |")
 
+async def init_db():
+    """
+    Deploy-time schema bootstrap: installs the pgvector extension and creates
+    any missing tables in the database the connection string already points at.
+
+    Kept separate from application startup so it can run as a one-off release
+    step, where exactly one process executes it, instead of every web replica
+    racing to create the same tables on boot. Idempotent — safe to re-run on
+    every deploy.
+    """
+    from app.db.database_manager import DatabaseManager
+
+    console.print(Panel("[bold cyan]RAG Pipeline[/] - Bootstrapping database schema", border_style="cyan"))
+
+    db = DatabaseManager()
+    try:
+        await db.create_tables()
+        console.print(Panel(
+            "[bold green]Schema is up to date.[/]\n\n"
+            "[dim]pgvector extension present, tables created if missing.[/]",
+            title="init-db complete",
+            border_style="green"
+        ))
+    except Exception as e:
+        console.print(Panel(f"[bold red]Bootstrap failed:[/]\n{e}", border_style="red"))
+        sys.exit(1)
+    finally:
+        await db.engine.dispose()
+
+
+async def check_embeddings():
+    """
+    Smoke-tests whichever embedding provider is configured.
+
+    Exists because switching EMBEDDING_PROVIDER to a hosted API moves a
+    dependency from "installed at build time" to "reachable at runtime with a
+    valid key". That is a class of failure you want to see in five seconds
+    locally, not in a worker crash-loop after deploying.
+    """
+    import numpy as np
+    from app.engines.embeddings import build_provider
+
+    console.print(Panel(
+        f"[bold cyan]Embedding provider check[/]\n[dim]provider: {settings.embedding_provider}[/]",
+        border_style="cyan"
+    ))
+
+    try:
+        provider = build_provider()
+        vectors = await asyncio.to_thread(
+            provider.embed, ["the cat sat on the mat", "a feline rested on a rug"]
+        )
+    except Exception as e:
+        console.print(Panel(f"[bold red]Provider failed:[/]\n{e}", border_style="red"))
+        sys.exit(1)
+
+    dim = vectors.shape[1]
+    norm = float(np.linalg.norm(vectors[0]))
+    similarity = float(np.dot(vectors[0], vectors[1]))
+    dim_ok = dim == settings.embedding_dimension
+
+    console.print(Panel(
+        f"[bold]Vectors returned:[/] {vectors.shape[0]}\n"
+        f"[bold]Dimensions:[/] {dim} "
+        f"({'[green]matches[/]' if dim_ok else '[bold red]MISMATCH[/]'} the Vector({settings.embedding_dimension}) column)\n"
+        f"[bold]L2 norm:[/] {norm:.4f} [dim](should be ~1.0 — vectors must be normalized)[/]\n"
+        f"[bold]Similarity of two paraphrases:[/] {similarity:.4f} [dim](should be high, >0.5)[/]",
+        title="Provider OK" if dim_ok else "Dimension mismatch",
+        border_style="green" if dim_ok else "red"
+    ))
+
+    if not dim_ok:
+        console.print(
+            "[bold red]Stop:[/] this provider's dimension does not match the database column. "
+            "Stored vectors and new ones are not comparable; inserts will fail."
+        )
+        sys.exit(1)
+
+
 def main():
     """Entrypoint parsing CLI arguments and routing calls to respective async handlers."""
     parser = argparse.ArgumentParser(description="RAG Pipeline CLI")
@@ -377,6 +457,8 @@ def main():
     ingest_parser = subparsers.add_parser("ingest", help="Ingest a PDF document into the database")
     ingest_parser.add_argument("filepath", type=str, help="Path to the PDF file")
     subparsers.add_parser("agent", help="Start an interactive reasoning agent chat session")
+    subparsers.add_parser("init-db", help="Create the pgvector extension and any missing tables (idempotent)")
+    subparsers.add_parser("check-embeddings", help="Smoke-test the configured embedding provider (dimension, norm, reachability)")
     
     # Query command subcommand.
     query_parser = subparsers.add_parser("query", help="Query an ingested document")
@@ -401,6 +483,10 @@ def main():
         asyncio.run(query_document(args.file_id, args.query_text, args.top))
     elif args.command == "agent":
         asyncio.run(start_agent_chat())
+    elif args.command == "init-db":
+        asyncio.run(init_db())
+    elif args.command == "check-embeddings":
+        asyncio.run(check_embeddings())
     elif args.command == "evaluate-retrieval":
         asyncio.run(evaluate_retrieval(args.dataset, args.corpus, args.force, args.cleanup, args.markdown))
     else:

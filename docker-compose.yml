@@ -1,7 +1,7 @@
 services:
   # 1. The Database (with pgvector installed)
   db:
-    image: ankane/pgvector:latest
+    image: pgvector/pgvector:pg17
     container_name: postgres_db
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
@@ -46,7 +46,11 @@ services:
 
   # 4. FastAPI application server
   api:
-    build: .
+    build:
+      context: .
+      args:
+        # Local image keeps sentence-transformers/torch so EMBEDDING_PROVIDER=local works.
+        REQUIREMENTS: requirements.txt
     container_name: rag_api
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     ports:
@@ -58,10 +62,15 @@ services:
       - DB_PASSWORD=${DB_PASSWORD:-password}
       - DB_NAME=${DB_NAME:-tutorial_db}
       - REDIS_URL=redis://redis:6379/0
+      # Local dev keeps the schema bootstrap on boot for convenience; production
+      # runs it as an explicit release step instead (see deployment.md).
+      - BOOTSTRAP_DB_ON_STARTUP=true
+      # Local runs use the in-process model the eval numbers were measured with.
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-local}
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_API_BASE=${LLM_API_BASE:-https://generativelanguage.googleapis.com/v1beta}
-      - LLM_MODEL=${LLM_MODEL:-gemini-1.5-flash}
+      - LLM_MODEL=${LLM_MODEL:-gemini-2.5-flash}
     volumes:
       # Shared with the worker: the API writes uploads here, the worker reads them.
       - ./data:/app/data
@@ -77,7 +86,10 @@ services:
 
   # 5. Celery Worker (Processes heavy document ingestion asynchronously, CPU)
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements.txt
     container_name: celery_worker
     command: celery -A app.worker.celery_app worker --loglevel=info
     environment: *app_env
@@ -96,7 +108,10 @@ services:
   # instead of relying on every machine having an NVIDIA runtime.
   worker-gpu:
     profiles: ["gpu"]
-    build: .
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements.txt
     container_name: celery_worker_gpu
     command: celery -A app.worker.celery_app worker --loglevel=info
     environment: *app_env

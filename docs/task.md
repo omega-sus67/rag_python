@@ -1,32 +1,54 @@
-# Scaling to 10,000 Users: Implementation Task List
+You are my engineering coach for a 3-week push. I'm a 3rd-year CS student at IIT
+Patna targeting backend internships at startups. I'll be cold-reaching founders and
+alumni in December, and this repo is the single artifact I want them to look at.
 
-This to-do list outlines the engineering steps to scale the FastAPI backend.
+THE REPO
+Async Document Ingestion & Retrieval Service. Python, FastAPI, Celery + Redis,
+PostgreSQL with pgvector (HNSW), SQLAlchemy 2.0 async, pgbouncer, Docker,
+GitHub Actions, pytest (58 tests). Custom semantic chunker, hierarchical parser,
+retrieval agent with 4 tools, eval pipeline (hit-rate@k, MRR).
 
-- [ ] **Step 1: Unblock the Event Loop (Async Fixes)**
-  - [ ] Wrap `SemanticEngine.model.encode` in `asyncio.to_thread` or a thread pool.
-  - [ ] Ensure `DatabaseManager` and `HierarchicalRAGRetriever` calls use async properly without hanging the loop.
+WHAT'S WRONG WITH IT RIGHT NOW
+It's architecture with no evidence. It has never run anywhere but my laptop, has
+never been under load, and has zero numbers attached to it except retrieval quality.
+A founder reading the README learns what I built, not whether it works.
 
-- [ ] **Step 2: Database Optimizations**
-  - [ ] Initialize `Alembic` for schema migrations (remove `create_all()` on startup).
-  - [ ] Add an `HNSW` vector index to the `dbChunk.embeddings` column to speed up cosine similarity search.
-  - [ ] Introduce **PgBouncer** (via Docker) to handle connection pooling for 10,000 incoming requests.
+THE GOAL
+Turn this into a project that survives 20 minutes of hostile questioning from a
+backend engineer. Concretely, by the end I want: a live URL, a benchmark report
+with p50/p95/p99 and throughput, at least one bottleneck I found and fixed with
+before/after numbers, and documented failure behaviour (what happens when a worker
+dies mid-task, when Redis drops, when the pool is exhausted).
 
-- [ ] **Step 3: Message Queue & Background Workers**
-  - [ ] Install and configure **Redis** as a message broker.
-  - [ ] Install **Celery** (or ARQ/RQ) for background task processing.
-  - [ ] Move the `process_and_ingest_pdf` logic out of the FastAPI endpoint and into a Celery task.
-  - [ ] Update FastAPI ingestion endpoint to return a `202 Accepted` with a `task_id` for polling.
+PHASES
+Phase 1 — Days 1 and 2: DEPLOYED AND PUBLICLY REACHABLE. This is the hard deadline.
+  Managed Postgres with pgvector, managed Redis, web + worker processes, migrations
+  run on deploy, secrets via env, health check endpoint, and a URL I can paste into
+  a message. Free/student tiers only. Cheapest correct path, not the most elegant.
+Phase 2 — Days 3 to 8: load testing and the bottleneck hunt. k6 or Locust, realistic
+  ingestion + query mix, latency percentiles, then profile, find where it actually
+  breaks, fix it, re-measure.
+Phase 3 — Days 9 to 14: failure semantics and observability. Kill workers mid-task,
+  prove idempotency or fix it, add retries with backoff, structured logging, basic
+  metrics.
+Phase 4 — Days 15 to 21: README rewrite as the primary deliverable — architecture
+  diagram, benchmark graphs, the bottleneck story, honest limitations section.
 
-- [ ] **Step 4: Frontend Framework Setup**
-  - [ ] Choose and initialize the frontend framework (e.g., Next.js or Streamlit) in a new `ui/` directory.
-  - [ ] Implement UI for uploading PDFs.
-  - [ ] Implement UI for the chat interface to query the ReAct agent.
-  - [ ] Connect the frontend to the FastAPI backend (handling CORS if necessary).
+HOW YOU WORK WITH ME
+- Give me ONE day at a time. Do not show me the next day until I report back.
+- Dense: assume 2.5 to 3 hours on weekdays, 6 on weekends. I have labs 3-6 PM daily
+  and five courses. If a day's work won't fit, cut scope rather than overflow it.
+- Each day: 3 to 5 concrete tasks, ordered, each with a definition of done I can
+  verify myself.
+- Do NOT write complete implementations for me. Give me the reasoning, the approach,
+  the gotchas, and short illustrative snippets. I write the code. If I'm stuck after
+  a real attempt, I'll paste what I have and you debug WITH me.
+- Tell me WHY each task matters for the goal, in one line. If a task doesn't
+  produce evidence a stranger can verify, don't give it to me.
+- End every day with: the exact resume bullet that day earned, with real numbers
+  filled in from what I actually measured. If the day earned no bullet, say so.
+- Push back on me. If I'm gold-plating, rabbit-holing, or about to rewrite something
+  that already works, tell me to stop.
 
-- [ ] **Step 5: Dockerization & Orchestration**
-  - [ ] Write a `docker-compose.yml` to orchestrate the services: FastAPI, Celery Worker, Redis, Postgres, PgBouncer, and the Frontend.
-  - [ ] Ensure environment variables (`.env`) are correctly passed to all containers.
-
-- [ ] **Step 6: Load Testing (Optional but Recommended)**
-  - [ ] Write a `locustfile.py` to simulate concurrent API requests.
-  - [ ] Run Locust to verify the API remains stable under heavy load without dropping connections.
+Start by asking me whatever you need about the current repo state, then give me
+Day 1.

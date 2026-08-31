@@ -1,0 +1,111 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# FREE-TIER VARIANT (default): one Web Service that runs the API and the Celery
+# worker side by side in a single container, via scripts/start-combined.sh.
+#
+# Why this shape: Render's free plan covers Web Services only — a Background
+# Worker requires a paid instance. The brief for this project is free tiers and
+# the cheapest correct path, so the free variant is what ships first.
+#
+# This is a deployment compromise, not the architecture. The system is two
+# independently scalable processes, and it runs that way under docker-compose
+# and under the two-service block at the bottom of this file. Collapsing them
+# means ingestion competes with the API event loop and neither scales alone.
+# Say that out loud rather than hiding it — see deployment.md.
+#
+# Postgres (Neon) and Redis (Redis Cloud) are provisioned outside this file and
+# injected as DATABASE_URL / REDIS_URL: their free tiers beat Render's.
+
+services:
+  - type: web
+    name: rag-api
+    runtime: docker
+    plan: free
+    region: singapore   # Neon and Redis are both ap-southeast-1. A US region
+                        # adds ~200ms to every DB round trip, and this app makes
+                        # several per request.
+    dockerfilePath: ./Dockerfile
+    dockerCommand: sh scripts/start-combined.sh
+    # Render polls this to decide whether the instance is healthy. It returns
+    # 503 when Postgres or Redis is unreachable, so a half-dead instance stops
+    # receiving traffic instead of silently erroring.
+    healthCheckPath: /health
+    envVars:
+      # Secrets are entered in the Render dashboard, never committed.
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: EMBEDDING_API_KEY
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      # Hosted embeddings keep the image torch-free and the container inside its
+      # 512 MB ceiling. See requirements-prod.txt.
+      # Embeddings: any OpenAI-wire-format vendor. Jina is 768-dim natively,
+      # which is what the Vector(768) column requires.
+      - key: EMBEDDING_PROVIDER
+        value: jina
+      - key: EMBEDDING_API_BASE
+        value: https://api.jina.ai/v1
+      - key: EMBEDDING_API_MODEL
+        value: jina-embeddings-v2-base-en
+      # LLM: Groq speaks the OpenAI format, so llm.py needs no vendor-specific code.
+      - key: LLM_PROVIDER
+        value: groq
+      - key: LLM_API_BASE
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
+      # Safe here specifically because this variant runs exactly one instance,
+      # so nothing can race it on CREATE TABLE. The two-service variant below
+      # turns this off and uses `python cli.py init-db` as a deploy step.
+      - key: BOOTSTRAP_DB_ON_STARTUP
+        value: "true"
+      # 8 MB, not the 25 MB default: on a 512 MB instance the API buffers the
+      # upload while PyMuPDF parses it in the same container, and a large PDF
+      # will OOM the box. Also keeps one upload from eating a 512 MB database.
+      - key: MAX_UPLOAD_BYTES
+        value: "8388608"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+# ---------------------------------------------------------------------------
+# TWO-SERVICE VARIANT — the real architecture, ~$7/mo for the worker.
+# Swap to this when the worker is worth paying for: delete the dockerCommand
+# line above, set BOOTSTRAP_DB_ON_STARTUP to "false", and uncomment this block.
+#
+#   - type: worker
+#     name: rag-worker
+#     runtime: docker
+#     plan: starter
+#     region: singapore
+#     dockerfilePath: ./Dockerfile
+#     # Concurrency 2 keeps two documents in flight without blowing the memory
+#     # ceiling. First knob to turn during Phase 2 load testing.
+#     dockerCommand: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
+#     envVars:
+#       - key: DATABASE_URL
+#         sync: false
+#       - key: REDIS_URL
+#         sync: false
+#       - key: EMBEDDING_API_KEY
+#         sync: false
+#       - key: LLM_API_KEY
+#         sync: false
+#       - key: EMBEDDING_PROVIDER
+#         value: jina
+#       - key: EMBEDDING_API_BASE
+#         value: https://api.jina.ai/v1
+#       - key: EMBEDDING_API_MODEL
+#         value: jina-embeddings-v2-base-en
+#       - key: LLM_PROVIDER
+#         value: groq
+#       - key: LLM_API_BASE
+#         value: https://api.groq.com/openai/v1
+#       - key: LLM_MODEL
+#         value: llama-3.3-70b-versatile
+#       - key: BOOTSTRAP_DB_ON_STARTUP
+#         value: "false"
+#       - key: PYTHONUNBUFFERED
+#         value: "1"

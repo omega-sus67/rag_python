@@ -1,16 +1,17 @@
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Any, Optional
 import re
 import threading
 import gc
 from app.core.config import settings
+from app.engines.embeddings import EmbeddingProvider, build_provider
 import asyncio
 
 class SemanticEngine:
     """
     Handles text-to-vector embedding generation and mathematical similarity calculations.
-    Wraps the SentenceTransformer model for centralized encoding.
+    Delegates the actual encoding to a pluggable provider (see app/engines/embeddings.py)
+    so the same pipeline runs against a local model or a hosted API.
     Supports lazy loading and inactivity auto-unloading to save RAM/VRAM.
     """
     def __init__(self):
@@ -19,18 +20,23 @@ class SemanticEngine:
         self._timer = None
 
     @property
-    def model(self) -> SentenceTransformer:
+    def model(self) -> EmbeddingProvider:
         """
-        Thread-safe lazy loader for the SentenceTransformer model.
+        Thread-safe lazy loader for the configured embedding provider.
         Resets the inactivity timer upon access.
         """
         with self._lock:
             if self._model is None:
-                self._model = SentenceTransformer(settings.embedding_model)
-            
+                provider = build_provider()
+                # Pay the model-loading cost here rather than on the first
+                # encode, so lazy-loading stays observable from outside.
+                if hasattr(provider, "warm"):
+                    provider.warm()
+                self._model = provider
+
             if settings.auto_unload_embeddings:
                 self._reset_timer()
-                
+
             return self._model
 
     def _reset_timer(self):
@@ -39,7 +45,7 @@ class SemanticEngine:
         """
         if self._timer is not None:
             self._timer.cancel()
-        
+
         self._timer = threading.Timer(settings.auto_unload_delay, self._unload_model)
         self._timer.daemon = True
         self._timer.start()
@@ -50,14 +56,12 @@ class SemanticEngine:
         """
         with self._lock:
             if self._model is not None:
+                # Let the provider release whatever it holds (torch weights,
+                # CUDA cache) before we drop our reference to it.
+                if hasattr(self._model, "unload"):
+                    self._model.unload()
                 self._model = None
                 gc.collect()
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except ImportError:
-                    pass
 
     def get_embeddings(self, texts: List[str]) -> np.ndarray:
         """
@@ -66,16 +70,10 @@ class SemanticEngine:
         """
         if not texts:
             return np.empty((0, settings.embedding_dimension))
-        
-        # Batch-encode texts. Normalize embeddings to unit L2 length (speeds up cosine calculations).
-        embeddings = self.model.encode(
-            texts,
-            convert_to_numpy=True,
-            show_progress_bar=True,
-            batch_size=settings.embedding_batch_size,
-            normalize_embeddings=True
-        )
-        return embeddings
+
+        # Providers are contracted to return L2-normalized vectors, so cosine
+        # similarity reduces to a dot product downstream.
+        return self.model.embed(texts)
 
     async def get_embeddings_async(self, texts: List[str]) -> np.ndarray:
         """

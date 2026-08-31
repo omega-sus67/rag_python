@@ -5,6 +5,12 @@ __pycache__/
 
 # Environment / secrets
 .env
+.env.*
+!.env.example
+# Scratch file holding live Neon/Redis connection strings in plaintext.
+# Untracked but previously unignored, which meant one `git add .` would have
+# published the database password.
+docs/myReference.txt
 
 # Generated artifacts
 ingestion.log

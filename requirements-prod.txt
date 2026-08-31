@@ -1,0 +1,29 @@
+# Production runtime dependencies.
+#
+# Deliberately does NOT include torch, sentence-transformers, or transformers.
+# Those three pull the CUDA wheel set (~2.5 GB of downloads) and cost ~1-1.5 GB
+# of resident memory to hold bge-base-en-v1.5, which does not fit — and is not
+# needed — in a free-tier container. Production sets EMBEDDING_PROVIDER=gemini
+# and reaches embeddings over HTTP instead.
+#
+# Local development, evaluation, and CI use requirements.txt, which keeps the
+# local model so the retrieval-quality numbers stay reproducible.
+
+fastapi==0.136.3
+uvicorn==0.48.0
+python-multipart==0.0.20
+pydantic==2.13.4
+pydantic-settings==2.14.1
+SQLAlchemy==2.0.50
+asyncpg==0.31.0
+pgvector==0.4.2
+pymupdf==1.27.2.3
+pymupdf4llm==1.27.2.3
+pypdf==6.12.2
+numpy==2.4.6
+python-dotenv==1.2.2
+tiktoken==0.13.0
+rich==15.0.0
+httpx==0.28.1
+celery==5.6.3
+redis==8.0.1
