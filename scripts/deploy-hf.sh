@@ -2,6 +2,13 @@
 #
 # Publish this repo to a Hugging Face Space.
 #
+# STATUS: not usable on a free account. Hugging Face moved Docker (and Gradio)
+# Spaces behind a paid plan — PRO for personal accounts, Team/Enterprise for
+# orgs. CPU Basic hardware is still free (2 vCPU / 16 GB), but you cannot create
+# a Docker Space without the subscription. Kept because the 16 GB would run the
+# structured parser with room to spare, so this is the one-command path the day
+# a subscription exists or the policy changes.
+#
 # Why a script rather than a second git remote: a Space needs YAML frontmatter at
 # the top of README.md, and putting that in the project README would leave a
 # config table sitting above the title on GitHub. This keeps the two READMEs

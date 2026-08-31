@@ -11,6 +11,15 @@ and a ReAct agent that is *structurally prevented* from answering without retrie
 **Live:** <https://rag-api-rj1z.onrender.com/docs> — interactive API, upload a PDF and query it.
 Free tier, so the first request after idle takes ~50s to wake.
 
+> **The deployed instance runs in a reduced-memory mode.** `pymupdf4llm` needs a
+> ~300 MB fixed working set — measured, and independent of document size — which does
+> not fit a 512 MB container that also runs the API process. So the live demo uses
+> `PDF_PARSER=fast`: plain text extraction at 211 MB instead of 446 MB, which costs it
+> the markdown headings, and therefore the breadcrumb context paths described below
+> (49 chunks where the structured parser produces 196). Run locally, or on any host
+> with ~1 GB, for the full pipeline. The measurements are in
+> [deployment.md](deployment.md#47-why-a-038-mb-pdf-exhausted-512-mb).
+
 Every claim below is measured. Where the measurement was unflattering, it is reported anyway.
 
 ---

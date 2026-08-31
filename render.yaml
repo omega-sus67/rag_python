@@ -66,12 +66,24 @@ services:
       # turns this off and uses `python cli.py init-db` as a deploy step.
       - key: BOOTSTRAP_DB_ON_STARTUP
         value: "true"
-      # 4 MB, not the 25 MB default. 8 MB was still too generous: a real README
-      # PDF OOM-killed the 512 MB instance during parse+embed, and upload size is
-      # the only knob that bounds peak memory from outside the process.
-      # Also keeps one upload from eating a 512 MB database.
+      # Plain-text extraction instead of pymupdf4llm. Measured: 211 MB peak
+      # versus 446 MB, because pymupdf4llm carries a ~300 MB fixed layout-analysis
+      # working set that does not shrink with document size (a 95-page PDF peaks
+      # LOWER than a 26-page one, and batching pages changes nothing).
+      #
+      # This is a documented downgrade, not a tuning win: no markdown headings,
+      # so the hierarchical parser sees a flat document and chunks carry no
+      # "Context: Chapter 2 > Section 2.1" breadcrumb. 49 chunks where structured
+      # produces 196. Run locally with PDF_PARSER=structured for full quality.
+      #
+      # It is here because Hugging Face moved Docker Spaces behind PRO, leaving
+      # no free host with enough memory for the structured parser.
+      - key: PDF_PARSER
+        value: fast
+      # 8 MB: fast mode leaves ~150 MB of headroom in 512 MB, but text volume
+      # still drives embedding memory, so the cap stays modest.
       - key: MAX_UPLOAD_BYTES
-        value: "4194304"
+        value: "8388608"
       - key: PYTHONUNBUFFERED
         value: "1"
 

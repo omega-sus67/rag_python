@@ -459,10 +459,17 @@ closes a 90 MB gap against a fixed library cost. `PDF_PARSER=fast` exists as the
 hatch, and it is honestly a downgrade — a quarter of the chunks and none of the
 structural context.
 
-The fix was to stop trying to fit and move to a host with room: a free Hugging Face
-Space (16 GB) runs `structured` with margin. `scripts/deploy-hf.sh` publishes there, and
-`deploy/huggingface/README.md` carries the Space frontmatter so the project README stays
-free of deployment config.
+The intended fix was to stop trying to fit and move to a host with room — a Hugging Face
+Space is 16 GB and would run `structured` with margin. That path is built
+(`scripts/deploy-hf.sh`, `deploy/huggingface/README.md`) but **is not usable on a free
+account**: Hugging Face moved Docker Spaces behind a paid plan. CPU Basic hardware is
+still free; creating a Docker Space is not.
+
+So the deployed instance runs `PDF_PARSER=fast` and the README says so. The honest
+summary is that no free host was found with enough memory for the structured parser,
+and the demo is degraded rather than absent. Oracle Cloud's always-free tier (24 GB ARM)
+would run it, at the cost of owning TLS, a domain and the box; AWS free tier would too,
+but expires after twelve months.
 
 One portability bug fell out of this. Spaces run the container as a **non-root uid**,
 while everything `COPY`d in is root-owned — and the app creates `data/uploads` and opens
