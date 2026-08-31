@@ -408,6 +408,68 @@ Verified after the fixes, through the HTTP API on production config:
 | "What must the Statement of Applicability contain?" | 3 tool calls, grounded answer, **0 unverified citations** |
 | "What is the capital of Australia?" (not in corpus) | searched, found nothing, and **said so** instead of answering from memory |
 
+## 4.7 Why a 0.38 MB PDF exhausted 512 MB
+
+Render OOM-killed the service (exit 137) on a 0.38 MB README. File size turned out to
+be almost unrelated to the memory that actually gets allocated, and measuring it was the
+only way to find out where the memory went.
+
+Where the worker's memory goes, measured by RSS at each stage:
+
+| Stage | RSS |
+|---|---|
+| bare Python | 9 MB |
+| + fastapi, celery, sqlalchemy, httpx, numpy | 66 MB |
+| + pymupdf, pymupdf4llm | 143 MB |
+| + MainController (engine, agent, chunker) | 194 MB |
+| **+ parsing one 475 KB PDF** | **438 MB** |
+
+The parse alone costs **~244 MB** — roughly 500× the file it is reading. And it is a
+*fixed* cost, not one that scales with the document:
+
+| Document | pages | peak RSS |
+|---|---|---|
+| iso27001.pdf | 26 | 364 MB |
+| Peter-Pan.pdf | 95 | 357 MB |
+
+A 95-page document peaks *lower* than a 26-page one. That rules out per-page
+accumulation, and it is why **batching pages does not help** — tried it, peak stayed at
+364 MB. The cost is `pymupdf4llm`'s layout-analysis working set, allocated on first use
+regardless of what it is handed.
+
+The comparison that isolates it, same documents, same extracted text:
+
+| Parser | chars extracted | peak RSS |
+|---|---|---|
+| plain `fitz.get_text()` | 57,392 | **51 MB** |
+| `pymupdf4llm.to_markdown()` | 60,186 | **364 MB** |
+
+**7× the memory for 5% more text.** What that 7× buys is real — markdown headings, which
+is what the hierarchical parser turns into `Context: Chapter 2 > Section 2.1` breadcrumbs.
+Through a full ingestion the trade is visible:
+
+| `PDF_PARSER` | chunks | with breadcrumb | peak RSS |
+|---|---|---|---|
+| `fast` | 49 | 0 | 211 MB |
+| `structured` | 196 | 196 | 446 MB |
+
+So the arithmetic on a 512 MB single-container tier is simply lost: 446 MB of worker
+plus ~150 MB of API process is over the limit before anything else happens. No tuning
+closes a 90 MB gap against a fixed library cost. `PDF_PARSER=fast` exists as the escape
+hatch, and it is honestly a downgrade — a quarter of the chunks and none of the
+structural context.
+
+The fix was to stop trying to fit and move to a host with room: a free Hugging Face
+Space (16 GB) runs `structured` with margin. `scripts/deploy-hf.sh` publishes there, and
+`deploy/huggingface/README.md` carries the Space frontmatter so the project README stays
+free of deployment config.
+
+One portability bug fell out of this. Spaces run the container as a **non-root uid**,
+while everything `COPY`d in is root-owned — and the app creates `data/uploads` and opens
+a log file under `/app` at startup. That is a `PermissionError` before the first request.
+The Dockerfile now creates and opens that directory at build time. Verified by running
+the built image with `--user 1000:1000`: startup writes succeed and `/docs` serves.
+
 ---
 
 ## 5. Known weaknesses

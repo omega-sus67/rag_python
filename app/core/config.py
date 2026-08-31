@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     # being pulled straight from os.environ in worker.py.
     redis_url: str = Field(default="redis://localhost:6379/0")
 
+    # PDF parsing strategy.
+    # "structured" = pymupdf4llm, which produces markdown headings and tables and
+    #   feeds the hierarchical parser its breadcrumb context paths.
+    # "fast"       = plain PyMuPDF text extraction. Measured at 51 MB peak versus
+    #   364 MB for pymupdf4llm on the same document — the layout analysis carries a
+    #   fixed ~300 MB working set that does not shrink with document size, so
+    #   batching pages does not help. Necessary on a 512 MB host that also runs the
+    #   API process; the cost is losing structural context, not just speed.
+    pdf_parser: str = Field(default="structured")
+
     # File handling
     upload_dir: str = Field(default="data/uploads")
     ingestion_log_path: str = Field(default="data/ingestion.log")

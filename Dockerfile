@@ -22,6 +22,14 @@ RUN pip install --no-cache-dir -r ${REQUIREMENTS}
 # Copy the rest of the application code
 COPY . .
 
+# The app writes uploads and an ingestion log under ./data at startup.
+# Hugging Face Spaces (and other hardened hosts) run the container as a
+# non-root uid, while everything copied above is owned by root — so without
+# this the process dies on boot with PermissionError before serving anything.
+# World-writable is acceptable for a directory holding only transient scratch
+# files; the durable state lives in Postgres.
+RUN mkdir -p /app/data/uploads && chmod -R 777 /app/data
+
 # Unbuffered stdout so container logs appear in the platform's log stream
 # immediately rather than sitting in a pipe buffer.
 ENV PYTHONUNBUFFERED=1

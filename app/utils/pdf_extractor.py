@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 import fitz
 
+from app.core.config import settings
+
 @dataclass
 class Document:
     """Simple container for storing extracted document details."""
@@ -47,12 +49,54 @@ def clean_extracted_text(text: str) -> str:
         
     return "\n".join(cleaned_lines)
 
+def _extract_plain_text(path: str) -> str:
+    """
+    Low-memory extraction: raw text, page by page, no layout analysis.
+
+    Measured against pymupdf4llm on the same documents:
+
+        iso27001.pdf   fitz  51 MB peak  vs  pymupdf4llm 364 MB peak
+        Peter-Pan.pdf  fitz  49 MB peak  vs  pymupdf4llm 357 MB peak
+
+    for essentially the same character count (57k vs 60k). pymupdf4llm's cost is
+    a *fixed* working set for layout analysis — it barely moves between a 26-page
+    and a 95-page document — so batching pages does not reduce it. On a 512 MB
+    container shared with the API process, that fixed cost is the difference
+    between ingesting and being OOM-killed.
+
+    What is lost is real and should not be glossed over: no markdown headings,
+    so the hierarchical parser sees a flat document and chunks carry no
+    "Context: Chapter 2 > Section 2.1" breadcrumb. Semantic chunking still runs;
+    structural context does not. This is a degraded mode for a constrained host,
+    not an equivalent one.
+    """
+    doc = fitz.open(path)
+    try:
+        return "\n\n".join(page.get_text() for page in doc)
+    finally:
+        doc.close()
+
+
 def parsePdf(path : str) -> Document :
     """
     Converts a PDF file to structural markdown layout using PyMuPDF4LLM.
     Uses multi-threaded parallel page extraction to bypass single-core bottlenecks
     for large documents (PyMuPDF / MuPDF releases GIL during layout analysis).
+
+    PDF_PARSER=fast switches to plain text extraction, which costs ~7x less
+    memory at the price of structural context. See _extract_plain_text.
     """
+    try:
+        if settings.pdf_parser.lower() == "fast":
+            return Document(
+                title=path.split("/")[-1].replace(".pdf", "").title(),
+                extracted_text=clean_extracted_text(_extract_plain_text(path)),
+            )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="file not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse PDF: {str(e)}")
+
     try:
         # Open PDF to get total pages
         doc = fitz.open(path)
