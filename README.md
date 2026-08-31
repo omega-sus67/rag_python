@@ -8,19 +8,38 @@ A Retrieval-Augmented Generation service built from scratch in Python — no Lan
 Hierarchical PDF parsing, sliding-window semantic chunking, an async ingestion pipeline,
 and a ReAct agent that is *structurally prevented* from answering without retrieving.
 
-**Live:** <https://rag-api-rj1z.onrender.com/docs> — interactive API, upload a PDF and query it.
-Free tier, so the first request after idle takes ~50s to wake.
-
-> **The deployed instance runs in a reduced-memory mode.** `pymupdf4llm` needs a
-> ~300 MB fixed working set — measured, and independent of document size — which does
-> not fit a 512 MB container that also runs the API process. So the live demo uses
-> `PDF_PARSER=fast`: plain text extraction at 211 MB instead of 446 MB, which costs it
-> the markdown headings, and therefore the breadcrumb context paths described below
-> (49 chunks where the structured parser produces 196). Run locally, or on any host
-> with ~1 GB, for the full pipeline. The measurements are in
-> [deployment.md](deployment.md#47-why-a-038-mb-pdf-exhausted-512-mb).
+Runs locally in two commands — see [**Run it**](#run-it) — and every screenshot below is
+real output from this code, not a mockup.
 
 Every claim below is measured. Where the measurement was unflattering, it is reported anyway.
+
+---
+
+## See it run
+
+**The agent answering from the corpus, showing its work.** Thought → Action → Observation,
+three real tool calls, and an answer grounded in what it actually retrieved:
+
+![The ReAct agent answering a question about ISO 27001](docs/screenshots/04-agent.png)
+
+Worth looking at the second observation: `"Context: **6.1.3 Information security risk
+treatment**"`. That prefix is the breadcrumb the hierarchical parser attaches to every
+chunk, and it is why the agent could go straight from a vague question to the right
+clause. The final answer cites `chk_2152d629` — a chunk id you can look up with
+`cli.py` and read for yourself.
+
+**Scoped semantic search**, with similarity scores on every hit:
+
+![Semantic search over a single document](docs/screenshots/03-query.png)
+
+**Ingestion** — parse, chunk, embed, store, in one command:
+
+![Ingesting a PDF](docs/screenshots/02-ingest.png)
+
+**Provider check.** Five seconds, and it catches a retired model, a wrong vector
+dimension, or a revoked key before anything else does. All three happened:
+
+![Verifying the embedding provider](docs/screenshots/01-check-embeddings.png)
 
 ---
 
@@ -172,12 +191,30 @@ this was the cheapest correct one.
 
 ---
 
-## Deployment
+## Deployment: built, measured, and deliberately not shipped
 
-Live on Render + Neon (Postgres) + Redis Cloud, all free tiers.
-[**deployment.md**](deployment.md) is the full record — what broke, why, and what each fix cost.
+The service was deployed — Render + Neon (Postgres) + Redis Cloud, all free tiers — and
+then taken down on purpose. [**deployment.md**](deployment.md) is the full record.
 
-Getting there meant clearing five blockers that local Docker Compose was actively hiding.
+The reason is worth stating plainly, because it was a judgement call rather than a
+failure to finish. `pymupdf4llm` needs a **~300 MB fixed working set** for layout
+analysis — measured, and independent of document size: a 95-page PDF peaks *lower* than
+a 26-page one, and batching pages changes nothing. Against plain text extraction on the
+same document: **364 MB versus 51 MB** for 5% more text.
+
+That does not fit a 512 MB container also running the API process. The only free
+workaround was `PDF_PARSER=fast`, which trades the markdown headings away — and the
+headings are what become the breadcrumb context paths visible in the agent screenshot
+above. It produces **49 chunks where the structured parser produces 196, none carrying
+context**, and it invalidates the retrieval numbers below, which were measured with
+structured parsing.
+
+A demo that quietly disables the hierarchical parsing is a worse artifact than no demo,
+so the deployment work stayed and the URL went. `render.yaml` and the runbook are still
+here; everything runs locally at full quality.
+
+Getting it deployed in the first place meant clearing five blockers that local Docker
+Compose was actively hiding.
 **Compose was not a smaller version of production; it was a different architecture.**
 
 | Blocker | What Compose hid |

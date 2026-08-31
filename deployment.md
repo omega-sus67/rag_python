@@ -3,7 +3,13 @@
 How this service goes from "runs on my laptop" to a public URL, what had to change
 to make that possible, and what is still weak about it.
 
-Written to be read start-to-finish once, then used as a runbook.
+**Status: the deployment was built, measured, and then retired on purpose.** Every fix
+below is real and still in the code. The URL is gone because the only free host that
+fit required `PDF_PARSER=fast`, which disables the hierarchical parsing this project
+exists to demonstrate — the arithmetic is in §4.7. A demo that quietly turns off the
+feature it is demonstrating is a worse artifact than no demo.
+
+Written to be read start-to-finish once, then used as a runbook if it is ever revived.
 
 ---
 
