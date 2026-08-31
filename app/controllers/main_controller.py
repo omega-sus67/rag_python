@@ -84,6 +84,26 @@ class MainController:
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"PDF Parsing Failed: {str(e)}")
 
+            # A PDF we cannot read any text out of is not an ingestion success.
+            #
+            # Without this it is reported as SUCCESS with chunks_processed: 0, and
+            # the document id is the SHA-256 of the empty string — so the *first*
+            # unreadable PDF claims that hash and every later one collides with it
+            # and is rejected as a "duplicate". Two unrelated failures, both
+            # reported as something they are not.
+            #
+            # Scanned or image-only PDFs land here; they need OCR, which this
+            # pipeline does not do, and saying so is more useful than a silent
+            # empty document.
+            if not (doc.extracted_text or "").strip():
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"No text could be extracted from '{filename}'. It may be a scanned "
+                        "or image-only PDF, which needs OCR before it can be ingested."
+                    ),
+                )
+
             # Step 2: Save document metadata. Will throw 400 error on duplicate hashes.
             print("[Ingestion] Phase 2: PDF parsed successfully. Saving document metadata and checking for duplicates...", flush=True)
             db_doc = await self.db_manager.save_document(doc)

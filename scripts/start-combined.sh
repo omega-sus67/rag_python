@@ -16,10 +16,23 @@
 set -e
 
 echo "[start-combined] launching Celery worker..."
+# --pool=solo, not the default prefork.
+#
+# Prefork forks a child process per concurrency slot, so the interpreter, the
+# imports and the loaded libraries are all paid for twice inside one container.
+# On a 512 MB free tier that is the difference between ingesting a document and
+# being OOM-killed by the platform mid-task — which is exactly what happened:
+# Render killed the worker, and because Celery acknowledges a task before
+# running it, the task died with no result and no retry, leaving /task/status
+# reporting PENDING forever.
+#
+# solo runs the task in the worker process itself. It gives up parallelism the
+# free tier could not afford anyway (concurrency was already 1).
+#
 # --without-gossip/mingle/heartbeat drop inter-worker chatter that a single
 # worker has no use for, and each of those costs broker connections on a tier
 # that caps total clients.
-celery -A app.worker.celery_app worker --loglevel=info --concurrency=1 \
+celery -A app.worker.celery_app worker --loglevel=info --pool=solo \
     --without-gossip --without-mingle --without-heartbeat &
 WORKER_PID=$!
 

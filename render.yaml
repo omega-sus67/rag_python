@@ -66,11 +66,12 @@ services:
       # turns this off and uses `python cli.py init-db` as a deploy step.
       - key: BOOTSTRAP_DB_ON_STARTUP
         value: "true"
-      # 8 MB, not the 25 MB default: on a 512 MB instance the API buffers the
-      # upload while PyMuPDF parses it in the same container, and a large PDF
-      # will OOM the box. Also keeps one upload from eating a 512 MB database.
+      # 4 MB, not the 25 MB default. 8 MB was still too generous: a real README
+      # PDF OOM-killed the 512 MB instance during parse+embed, and upload size is
+      # the only knob that bounds peak memory from outside the process.
+      # Also keeps one upload from eating a 512 MB database.
       - key: MAX_UPLOAD_BYTES
-        value: "8388608"
+        value: "4194304"
       - key: PYTHONUNBUFFERED
         value: "1"
 

@@ -32,6 +32,28 @@ if REDIS_URL.startswith("rediss://"):
 #
 # These limits trade a little throughput headroom for staying inside the tier.
 # Raise them together with the tier when load testing needs the concurrency.
+# Acknowledge a task only after it finishes, and requeue it if the worker dies
+# holding it.
+#
+# Celery's default is to ack on receipt, which means a worker killed mid-task
+# takes the task with it: no result, no error, no retry. The status endpoint
+# then reports PENDING forever, because Celery cannot tell "queued" from
+# "never existed". That is precisely what an OOM kill on a 512 MB container
+# looked like from the outside — the upload simply vanished.
+#
+# The cost is a poison-pill risk: a document that reliably kills the worker will
+# be redelivered rather than dropped. worker_max_tasks_per_child bounds how much
+# memory one worker can accumulate before being recycled, and the real mitigation
+# is not running out of memory in the first place (see --pool=solo in
+# scripts/start-combined.sh). If a single document ever does loop, that is a
+# visible restart loop rather than a silent disappearance — which is the trade
+# being made deliberately.
+celery_app.conf.task_acks_late = True
+celery_app.conf.task_reject_on_worker_lost = True
+# Only fetch what is being worked on, so a queued task is not held hostage
+# inside a worker that is about to be killed.
+celery_app.conf.worker_prefetch_multiplier = 1
+
 celery_app.conf.broker_pool_limit = 2
 celery_app.conf.broker_transport_options = {"max_connections": 4}
 celery_app.conf.result_backend_transport_options = {"max_connections": 4}
