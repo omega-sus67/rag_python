@@ -466,10 +466,9 @@ hatch, and it is honestly a downgrade — a quarter of the chunks and none of th
 structural context.
 
 The intended fix was to stop trying to fit and move to a host with room — a Hugging Face
-Space is 16 GB and would run `structured` with margin. That path is built
-(`scripts/deploy-hf.sh`, `deploy/huggingface/README.md`) but **is not usable on a free
-account**: Hugging Face moved Docker Spaces behind a paid plan. CPU Basic hardware is
-still free; creating a Docker Space is not.
+Space is 16 GB and would run `structured` with margin. That turned out to be a dead end:
+Hugging Face moved Docker Spaces behind a paid plan. CPU Basic hardware is still free;
+creating a Docker Space is not.
 
 So the deployed instance runs `PDF_PARSER=fast` and the README says so. The honest
 summary is that no free host was found with enough memory for the structured parser,

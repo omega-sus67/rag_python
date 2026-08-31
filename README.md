@@ -110,24 +110,27 @@ Query: "What is the capital of Australia?"        (not in the corpus)
 ### Locally, with Docker
 
 ```bash
-cp .env.example .env          # fill in DB password + provider keys
+cp .env.example .env          # defaults need no API key
 docker compose up --build     # db, pgbouncer, redis, api, worker
 # GPU machine? docker compose --profile gpu up --build
 
-curl -F "file=@trialData/Peter-Pan.pdf" http://localhost:8000/upload   # 202 + task_id
+curl -F "file=@your-document.pdf" http://localhost:8000/upload   # 202 + task_id
 curl http://localhost:8000/task/status/<task_id>
 curl -X POST http://localhost:8000/agent/query \
      -H "Content-Type: application/json" \
-     -d '{"query": "Who is Captain Hook and what happened to his hand?"}'
+     -d '{"query": "your question"}'
 ```
 
-Local runs default to `EMBEDDING_PROVIDER=local`, which uses `bge-base-en-v1.5` in-process —
-the model the evaluation numbers were measured with, so they stay reproducible.
+Ingestion and search need **no API key**. `EMBEDDING_PROVIDER=local` is the default and
+downloads `bge-base-en-v1.5` on first use — the model the evaluation numbers were
+measured with, so a clone reproduces them. Only the ReAct agent needs an LLM key, since
+it has to talk to a model; set `LLM_API_KEY` and the three `LLM_*` values in `.env`
+(Groq and Ollama both work — see `.env.example`).
 
 ### CLI
 
 ```bash
-python cli.py ingest trialData/Peter-Pan.pdf              # parse + chunk + embed + store
+python cli.py ingest your-document.pdf                    # parse + chunk + embed + store
 python cli.py query <document_id> "your question" --top 3 # scoped similarity search
 python cli.py agent                                       # interactive ReAct chat
 python cli.py evaluate-retrieval --markdown               # the benchmark above
@@ -137,6 +140,17 @@ python cli.py check-embeddings                            # verify a provider in
 
 `check-embeddings` earned its place: it catches a retired model, a wrong vector dimension,
 or a blocked API key *before* a deploy does. All three happened.
+
+### About the evaluation corpus
+
+`eval_dataset.json` ships — 18 hand-written questions with expected answer substrings —
+but the PDFs it scores against do not. Three are public-domain Gutenberg texts
+(*The Gift of the Magi*, *Peter Pan*, *White Nights*); the fourth is the ISO/IEC 27001
+standard, which is copyrighted and not mine to redistribute. Drop them in `trialData/`
+under the filenames in `eval_dataset.json` to reproduce the table above.
+
+That is a real reproducibility gap and it is named rather than hidden: the harness and
+the questions are auditable, the corpus is one you have to assemble.
 
 ### Tests
 
@@ -350,8 +364,8 @@ app/
   eval/                retrieval-quality harness
 cli.py                 ingest / query / agent / evaluate / init-db / check-embeddings
 deployment.md          the full deployment record
-render.yaml            Render blueprint (free single-service; paid two-service commented)
-docs/CHANGES_EXPLAINED.md  per-change reasoning
+render.yaml            Render blueprint from the deployment described above
+docs/screenshots/      the terminal captures at the top of this file
 ```
 
 ---

@@ -23,6 +23,12 @@ data/
 trialData/
 *.pdf
 
+# Working notes kept locally: the coaching/engineering log, the original brief,
+# and the interview-prep change log. Useful to me, not part of the project.
+CLAUDE.md
+docs/task.md
+docs/CHANGES_EXPLAINED.md
+
 # Personal notes and drafts
 dev_log.md
 rag_pipeline_review.md
