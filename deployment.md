@@ -352,6 +352,62 @@ uploads returned `202` and sat in `PENDING` forever. A half-dead service that pa
 its own health check is worse than one that is plainly down, because nothing triggers a
 restart. The supervisor now watches both PIDs and exits non-zero if either dies.
 
+## 4.6 The ReAct agent was not doing retrieval
+
+Worth its own section, because it is the flaw most likely to be caught in a demo and
+the hardest to spot from the outside: the answers looked good.
+
+**The loop exited on the first "Final Answer:" it saw.** `run()` matched the final-answer
+pattern *before* the action pattern and returned immediately, so nothing ever obliged the
+model to search. Two runs, both against a live corpus:
+
+- Asked about *The Gift of the Magi*, the agent called `list_documents` (titles only),
+  recognised the story, and answered from training data — **getting it wrong**: it said
+  Della *received* the watch chain, when the chain is what she bought for Jim.
+- Asked about ISO 27001 clause 6.1.3 — a document the model has never seen — it made
+  **zero tool calls** and invented a citation, `【ISO 27001 Document – Clau…`.
+
+A retrieval system answering from parametric knowledge is not a retrieval system. It is
+also the failure a hostile reader finds in one question, by asking about something in
+the corpus that contradicts what the model already believes.
+
+Fixed with a **retrieval gate**: a Final Answer is rejected until at least one
+content-returning tool (`search_all_documents`, `search_document`, `read_chunk`) has
+succeeded. `list_documents` deliberately does not count — it returns titles, and a title
+is exactly what lets a model bluff.
+
+Three consequences, each needing its own fix:
+
+1. **Iteration budget.** Forcing retrieval costs turns. At the old limit of 5 the agent
+   did all the retrieval correctly and then timed out before writing the answer — the
+   worst outcome, paying full cost for nothing. Now 8.
+2. **Context growth.** Observations are fed back verbatim and the whole context is
+   re-sent every iteration, so a multi-KB chunk of JSON is paid for once per remaining
+   turn. That exhausted Groq's free 8k tokens/minute mid-run. Observations are now
+   truncated to 1,200 chars *in the context only*; the full text stays in `history` for
+   the UI. The LLM client also retries 429s, preferring the delay the API itself
+   suggests over guessing.
+3. **Model choice is not free.** `openai/gpt-oss-120b` emits *native* tool calls, which
+   this hand-rolled text-format loop does not consume — Groq then rejects the request
+   outright (`tool choice is none, but model called a tool`). `qwen/qwen3.8-27b` follows
+   the text protocol. A hand-rolled ReAct loop constrains which models you can use, and
+   that is a real cost of not using a framework.
+
+**Citations are a separate problem from grounded prose.** Even once retrieval was
+working and the summary of clause 6.1.3 was accurate, the agent cited 8 chunk IDs of
+which **2 did not exist** — fabricated in the same `chk_xxxxxxxx` shape as the real ones
+and indistinguishable by eye. A citation nobody can follow is worse than no citation,
+because it reads as evidence. `validate_citations()` now checks every cited ID against
+the database, replaces unverifiable ones, and returns them in the response as
+`unverified_citations` rather than hiding the fact.
+
+Verified after the fixes, through the HTTP API on production config:
+
+| Query | Behaviour |
+|---|---|
+| "What must the Statement of Applicability contain?" | 3 tool calls, grounded answer, **0 unverified citations** |
+| "What is the capital of Australia?" (not in corpus) | searched, found nothing, and **said so** instead of answering from memory |
+
 ---
 
 ## 5. Known weaknesses
@@ -367,6 +423,15 @@ Worth stating before someone else finds them.
 - **No retry policy on the ingestion task yet.** A worker killed mid-task loses the
   task; the blob row is deleted in `finally` even on failure, so a retry would find
   nothing. That is Phase 3 work and it is a genuine correctness gap, not a polish item.
+- **The retrieval gate is a blunt instrument.** It requires *a* successful content
+  lookup, not a *relevant* one: an agent that searches badly, gets nothing useful, and
+  then answers from memory would still pass. The honest fix is grounding verification —
+  checking the answer's claims against the retrieved text — which this does not do.
+- **Citation validation only checks existence, not support.** A cited chunk ID that
+  exists but does not actually support the sentence it is attached to passes silently.
+- **Chunk IDs are `chk_` + 8 hex characters**, which is exactly why the model can
+  fabricate plausible ones. Longer or structurally checkable IDs would make invented
+  citations self-evident instead of needing a database round trip to catch.
 - **Switching to hosted embeddings has not been re-evaluated for quality.** The
   hit@5 = 50.0% / MRR figures were measured with `bge-base-en-v1.5`. Same dimension is
   not the same model — the eval should be re-run against `gemini-embedding-001` before

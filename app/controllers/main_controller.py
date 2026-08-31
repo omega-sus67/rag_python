@@ -160,8 +160,16 @@ class MainController:
         Returns the final answer along with intermediate reasoning steps.
         """
         answer, steps = await self.agent.run(user_query)
+
+        # The agent cites chunk IDs, and sometimes invents ones shaped exactly
+        # like the real ones. Verify each against the database before the answer
+        # leaves the system, and report any that could not be verified rather
+        # than quietly dropping them.
+        answer, unverified = await self.agent.validate_citations(answer)
+
         return {
             "query": user_query,
             "answer": answer,
-            "steps": steps
+            "steps": steps,
+            "unverified_citations": unverified
         }

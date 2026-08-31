@@ -96,6 +96,35 @@ class ReActAgent:
             return f"Error: Chunk with ID '{chunk_id}' not found."
         return json.dumps(chunk, indent=2)
 
+    async def validate_citations(self, answer: str) -> Tuple[str, List[str]]:
+        """
+        Check every chunk ID the answer cites against the database.
+
+        Grounded prose and grounded *citations* turn out to be different
+        problems. Measured on a real run: the agent retrieved correctly and
+        summarised clause 6.1.3 accurately, then cited 8 chunk IDs of which 2
+        did not exist — invented in the same shape as the real ones, and
+        indistinguishable by eye.
+
+        A citation nobody can follow is worse than no citation, because it
+        looks like evidence. Unverifiable IDs are stripped from the answer and
+        returned separately so the caller can surface that it happened.
+        """
+        cited = sorted(set(re.findall(r"chk_[0-9a-f]{6,}", answer)))
+        if not cited:
+            return answer, []
+
+        unverified = []
+        for chunk_id in cited:
+            if await self.db_manager.fetch_chunk_by_id(chunk_id) is None:
+                unverified.append(chunk_id)
+
+        cleaned = answer
+        for bad_id in unverified:
+            cleaned = cleaned.replace(bad_id, "[unverified citation removed]")
+
+        return cleaned, unverified
+
     # --- Agent Orchestration Loop ---
     def _build_system_instruction(self) -> str:
         # Prompt telling the LLM how to format outputs and use tools
@@ -121,8 +150,17 @@ class ReActAgent:
         Final Answer: your comprehensive response based on the search results. Include citations referencing the document title or chunk ID.
 
         Rules:
+        - You MUST search the knowledge base before answering. Never answer from your own
+          background knowledge, even if you recognise the topic or the document title and
+          believe you already know the answer. Your training data is not a source here.
+        - list_documents only returns titles, not content. It is never sufficient on its own
+          to answer a question — always follow it with a search.
         - If a tool returns no results, try a different search query or list documents to see what is available.
         - Do not make up facts. Only answer based on observations.
+        - Cite only document titles or chunk IDs that appeared in an Observation. Never
+          invent a citation.
+        - If the Observations do not contain the answer, say so plainly instead of filling
+          the gap from memory.
         - Always output either an Action block or a Final Answer block. Never both at the same time.
 
         Available Tools:
@@ -138,6 +176,30 @@ class ReActAgent:
         history: List[Dict[str, Any]] = []
         conversation_context = f"User Question: {query}\n"
 
+        # Whether the agent has actually looked at document *content* yet.
+        #
+        # list_documents only returns titles, so it does not count: an LLM that
+        # recognises a title can answer from memory without ever reading the
+        # corpus. Observed exactly that — asked about a well-known story, the
+        # model called list_documents, then answered from training data and got
+        # a detail wrong; asked about a document it had never seen, it answered
+        # with no tool calls at all and invented a citation.
+        has_retrieved = False
+        retrieval_tools = {"search_all_documents", "search_document", "read_chunk"}
+
+        # Observations are fed back into the context verbatim, and the context is
+        # re-sent on every iteration — so an un-truncated search result is paid
+        # for once per remaining turn. With chunk JSON running to several KB that
+        # exhausts a free tier's tokens-per-minute budget mid-run (Groq's is 8k).
+        # The full observation is still kept in `history` for the UI; only the
+        # copy the model re-reads is trimmed.
+        max_observation_chars = 1200
+
+        def for_context(text: str) -> str:
+            if len(text) <= max_observation_chars:
+                return text
+            return text[:max_observation_chars] + "\n...[truncated; call read_chunk for full text]"
+
         for iteration in range(settings.agent_max_iterations):
             # 1. Ask LLM for the next step
             system_instruction = self._build_system_instruction()
@@ -152,11 +214,28 @@ class ReActAgent:
             input_match = re.search(r"Action Input:\s*(\{.*?\})", response, re.DOTALL)
             final_match = re.search(r"Final Answer:\s*(.*)", response, re.DOTALL)
 
-            if final_match:
-                # The agent finished!
-                step_record["type"] = "final_answer"
-                step_record["content"] = final_match.group(1).strip()
-                return final_match.group(1).strip(), history
+            # A Final Answer is only accepted once the agent has actually read
+            # something from the knowledge base. Without this the loop exits on
+            # the first response containing "Final Answer:", which lets the model
+            # skip retrieval entirely and answer from parametric knowledge — the
+            # one thing a RAG system must not do. Note this check has to come
+            # before the action branch is skipped, and the ordering matters: a
+            # response carrying both blocks should act, not answer.
+            if final_match and not (action_match and input_match and not has_retrieved):
+                if has_retrieved:
+                    step_record["type"] = "final_answer"
+                    step_record["content"] = final_match.group(1).strip()
+                    return final_match.group(1).strip(), history
+
+                observation = (
+                    "Error: You attempted a Final Answer before searching the knowledge base. "
+                    "You must not answer from your own knowledge. Call search_all_documents "
+                    "(or search_document) first and base your answer only on the Observations."
+                )
+                step_record["type"] = "premature_final_answer"
+                step_record["observation"] = observation
+                conversation_context += f"\n{response}\nObservation: {for_context(observation)}\n"
+                continue
 
             if action_match and input_match:
                 tool_name = action_match.group(1).strip()
@@ -172,7 +251,7 @@ class ReActAgent:
                 except json.JSONDecodeError:
                     observation = f"Error: Action Input is not valid JSON: '{tool_input_str}'"
                     step_record["observation"] = observation
-                    conversation_context += f"\n{response}\nObservation: {observation}\n"
+                    conversation_context += f"\n{response}\nObservation: {for_context(observation)}\n"
                     continue
                 
                 # Execute tool
@@ -182,20 +261,23 @@ class ReActAgent:
                         observation = await tool_func(tool_args)
                     except Exception as e:
                         observation = f"Error running tool '{tool_name}': {str(e)}"
+                    # Only content-returning tools clear the retrieval gate.
+                    if tool_name in retrieval_tools and not observation.startswith("Error"):
+                        has_retrieved = True
                 else:
                     observation = f"Error: Tool '{tool_name}' is not registered."
-                
+
                 step_record["observation"] = observation
                 
                 # Append action and observation back to the context
-                conversation_context += f"\n{response}\nObservation: {observation}\n"
+                conversation_context += f"\n{response}\nObservation: {for_context(observation)}\n"
                 
             else:
                 # Malformed output from LLM; guide it to try again
                 observation = "Error: Your output did not follow the required format. You must output 'Action:' and 'Action Input:' OR 'Final Answer:'."
                 step_record["type"] = "malformed"
                 step_record["observation"] = observation
-                conversation_context += f"\n{response}\nObservation: {observation}\n"
+                conversation_context += f"\n{response}\nObservation: {for_context(observation)}\n"
 
         # Max iterations reached
         timeout_msg = "Agent timed out. I was unable to retrieve sufficient information in time to answer your question."

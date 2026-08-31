@@ -56,7 +56,11 @@ services:
       - key: LLM_API_BASE
         value: https://api.groq.com/openai/v1
       - key: LLM_MODEL
-        value: llama-3.3-70b-versatile
+        value: qwen/qwen3.8-27b
+      # The retrieval gate makes the agent spend turns searching before it may
+      # answer; 5 ran out mid-run after doing all the retrieval work.
+      - key: AGENT_MAX_ITERATIONS
+        value: "8"
       # Safe here specifically because this variant runs exactly one instance,
       # so nothing can race it on CREATE TABLE. The two-service variant below
       # turns this off and uses `python cli.py init-db` as a deploy step.
@@ -104,7 +108,7 @@ services:
 #       - key: LLM_API_BASE
 #         value: https://api.groq.com/openai/v1
 #       - key: LLM_MODEL
-#         value: llama-3.3-70b-versatile
+#         value: qwen/qwen3.8-27b
 #       - key: BOOTSTRAP_DB_ON_STARTUP
 #         value: "false"
 #       - key: PYTHONUNBUFFERED

@@ -94,10 +94,15 @@ class Settings(BaseSettings):
     llm_provider: str = Field(default="gemini")
     llm_api_key: str = Field(default="")
     llm_api_base: str = Field(default="https://generativelanguage.googleapis.com/v1beta")
-    # gemini-1.5-flash and 2.0-flash are both retired and now 404.
-    llm_model: str = Field(default="gemini-2.5-flash")
+    # gemini-1.5-flash and 2.0-flash are both retired and now 404. Production
+    # runs Groq; qwen follows the text ReAct format, where gpt-oss models try to
+    # emit native tool calls that this hand-rolled loop does not consume.
+    llm_model: str = Field(default="qwen/qwen3.8-27b")
     llm_temperature: float = Field(default=0.0)
-    agent_max_iterations: int = Field(default=5)
+    # 5 was too few once the agent is *forced* to retrieve before answering:
+    # list_documents + search + a couple of read_chunk calls exhausted the budget
+    # before it could write the answer, and the run timed out after doing all the work.
+    agent_max_iterations: int = Field(default=8)
 
 
     @property
